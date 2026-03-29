@@ -507,6 +507,9 @@ jobs:
       - name: enable lxc
         run: |
           cd kernel_workspace
+          wget https://github.com/zxcccssssssas-eng/oppo_oplus_realme_sm8850/raw/refs/heads/main/other_patch/sched.h
+          cp ./sched.h common/include/linux/sched.h -f
+          rm ./sched.h
           sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' common/kernel/module/version.c
           cat >> "./common/arch/arm64/configs/gki_defconfig" << 'EOF'
           
