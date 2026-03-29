@@ -504,7 +504,48 @@ jobs:
               echo "CONFIG_DEFAULT_TCP_CONG=cubic" >> ./common/arch/arm64/configs/gki_defconfig
             fi
           fi
+      - name: enable lxc
+        run: |
+          cd kernel_workspace
+          cat >> "./common/arch/arm64/configs/gki_defconfig" << 'EOF'
+          
+          # Required for Namespace support
+          
+          CONFIG_SYSVIPC=y
+          CONFIG_UTS_NS=y
+          CONFIG_IPC_NS=y
+          CONFIG_USER_NS=y
+          CONFIG_PID_NS=y
+          CONFIG_NET_NS=y
+          CONFIG_NET_RAW=y
+          CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
+          CONFIG_BRIDGE_NETFILTER=y
+          CONFIG_DEVPTS_MULTIPLE_INSTANCES=y
+          CONFIG_MODULES_SIG=n
+          CONFIG_MODULES_SIG_FORCE=n
+          CONFIG_ARM64_16K_PAGES=y
+          # Required for Control Groups
+          CONFIG_CGROUPS=y
 
+          
+          CONFIG_KALLSYMS=y
+          CONFIG_NF_NAT_IPV4=y
+          CONFIG_POSIX_MQUEUE=y
+          CONFIG_KEXEC=y
+          
+          
+          CONFIG_NF_NAT_IPV6=y
+          CONFIG_IP_NF_TARGET_MASQUERADE=y
+          CONFIG_ANDROID_PARANOID_NETWORK=n
+          # Required for Networking/Containers
+          #CONFIG_CGROUP_PIDS=y
+          CONFIG_VETH=y
+          CONFIG_BRIDGE=y
+          #CONFIG_NETFILTER_XT_TARGET_LOG is not set 
+          CONFIG_IP6_NF_TARGET_MASQUERADE=y
+          CONFIG_EARLY_PRINTK=y
+          
+          EOF
       - name: 启用ADIOS IO调度器
         if: inputs.adios_enable
         run: |
