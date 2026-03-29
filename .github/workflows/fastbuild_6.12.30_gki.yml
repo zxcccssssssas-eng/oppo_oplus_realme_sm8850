@@ -507,6 +507,7 @@ jobs:
       - name: enable lxc
         run: |
           cd kernel_workspace
+          sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' common/kernel/module/version.c
           cat >> "./common/arch/arm64/configs/gki_defconfig" << 'EOF'
           
           # Required for Namespace support
@@ -521,14 +522,12 @@ jobs:
           CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
           CONFIG_BRIDGE_NETFILTER=y
           CONFIG_DEVPTS_MULTIPLE_INSTANCES=y
-          CONFIG_MODULES_SIG=n
-          CONFIG_MODULES_SIG_FORCE=n
-          CONFIG_ARM64_16K_PAGES=y
+          
           # Required for Control Groups
           CONFIG_CGROUPS=y
 
           
-          CONFIG_KALLSYMS=y
+          
           CONFIG_NF_NAT_IPV4=y
           CONFIG_POSIX_MQUEUE=y
           CONFIG_KEXEC=y
