@@ -522,41 +522,14 @@ jobs:
         run: |
           cd kernel_workspace
           wget https://github.com/zxcccssssssas-eng/oppo_oplus_realme_sm8850/raw/refs/heads/main/other_patch/sched.h
-          cp ./sched.h common/include/linux/sched.h -f
-          rm ./sched.h
-          sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' common/kernel/module/version.c
+          #cp ./sched.h common/include/linux/sched.h -f
+          #rm ./sched.h
+          #sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' common/kernel/module/version.c
           cat >> "./common/arch/arm64/configs/gki_defconfig" << 'EOF'
-          
+          CONFIG_FTRACE_SYSCALLS=y
           # Required for Namespace support
           
-          CONFIG_SYSVIPC=y
-          CONFIG_UTS_NS=y
-          CONFIG_IPC_NS=y
-          CONFIG_USER_NS=y
-          CONFIG_PID_NS=y
-          CONFIG_NET_NS=y
-          CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
-          CONFIG_BRIDGE_NETFILTER=y
-          CONFIG_DEVPTS_MULTIPLE_INSTANCES=y
           
-          # Required for Control Groups
-          CONFIG_CGROUPS=y
-
-          
-          
-          CONFIG_NF_NAT_IPV4=y
-          CONFIG_POSIX_MQUEUE=y
-          CONFIG_KEXEC=y
-          
-          
-          CONFIG_NF_NAT_IPV6=y
-          CONFIG_IP_NF_TARGET_MASQUERADE=y
-          CONFIG_ANDROID_PARANOID_NETWORK=n
-          # Required for Networking/Containers
-          CONFIG_VETH=y
-          CONFIG_BRIDGE=y
-          #CONFIG_NETFILTER_XT_TARGET_LOG is not set 
-          CONFIG_IP6_NF_TARGET_MASQUERADE=y
           
           EOF
       - name: 启用ADIOS IO调度器
