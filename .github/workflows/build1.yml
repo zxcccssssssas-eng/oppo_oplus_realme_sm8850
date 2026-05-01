@@ -1,4 +1,4 @@
-name: (新版米/欧加真通用) 6.12.23 GKI内核快速构建
+name: (新版米/欧加真通用) 6.12.30 GKI内核快速构建
 
 env:
   TZ: Asia/Shanghai
@@ -520,7 +520,17 @@ jobs:
           cd kernel_workspace
           echo "CONFIG_REKERNEL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_REKERNEL_NETWORK=y" >> ./common/arch/arm64/configs/gki_defconfig
-
+      - name: enable lxc
+        run: |
+          cd kernel_workspace
+          wget https://github.com/zxcccssssssas-eng/oppo_oplus_realme_sm8850/raw/refs/heads/main/other_patch/sched.h
+          #cp ./sched.h common/include/linux/sched.h -f
+          #rm ./sched.h
+          #sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' common/kernel/module/version.c
+          cat >> "./common/arch/arm64/configs/gki_defconfig" << 'EOF'
+          CONFIG_FTRACE_SYSCALLS=y
+          # Required for Namespace support
+          
       - name: 启用内核级基带保护
         if: inputs.baseband_guard
         run: |
