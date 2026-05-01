@@ -529,7 +529,9 @@ jobs:
           #sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' common/kernel/module/version.c
           cat >> "./common/arch/arm64/configs/gki_defconfig" << 'EOF'
           CONFIG_FTRACE_SYSCALLS=y
-          
+          CONFIG_FUNCTION_TRACER=y
+          CONFIG_FUNCTION_GRAPH_TRACER=y
+          CONFIG_STACK_TRACER=y
           EOF
       - name: 启用内核级基带保护
         if: inputs.baseband_guard
