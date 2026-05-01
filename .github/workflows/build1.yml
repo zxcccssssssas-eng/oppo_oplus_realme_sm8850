@@ -41,6 +41,11 @@ on:
         required: true
         type: boolean
         default: 'true'
+      exp:
+        description: 'exo'
+        required: true
+        type: boolean
+        default: 'false'
       lz4kd_enable:
         description: '是否安装 LZ4KD 补丁(若已开启lz4+zstd补丁则可不开启)'
         required: true
@@ -521,7 +526,9 @@ jobs:
           echo "CONFIG_REKERNEL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_REKERNEL_NETWORK=y" >> ./common/arch/arm64/configs/gki_defconfig
       - name: enable lxc
+        if: inputs.exp
         run: |
+          
           cd kernel_workspace
           #wget https://github.com/zxcccssssssas-eng/oppo_oplus_realme_sm8850/raw/refs/heads/main/other_patch/sched.h
           #cp ./sched.h common/include/linux/sched.h -f
