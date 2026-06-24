@@ -414,6 +414,55 @@ jobs:
           echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> ./common/arch/arm64/configs/gki_defconfig
+      - name: 添加 Force Max CPU 模块
+        run: |
+          cd kernel_workspace/common
+          
+          # 创建模块目录
+          mkdir -p drivers/force_max
+          
+          # 写入 Makefile
+          echo 'obj-m += force_max.o' > drivers/force_max/Makefile
+          
+          # 写入 C 源码 (此处使用cat EOF写入，或者你可以用 wget 从你的仓库拉取)
+          cat << 'EOF' > drivers/force_max/force_max.c
+          #include <linux/init.h>
+          #include <linux/module.h>
+          #include <linux/cpufreq.h>
+          #include <linux/pm_qos.h>
+
+          MODULE_LICENSE("GPL");
+          MODULE_AUTHOR("Your Name");
+          MODULE_DESCRIPTION("Force Maximum CPU Frequency via Freq QoS");
+
+          static struct freq_qos_request min_freq_req;
+          static int target_cpu = 0; 
+          module_param(target_cpu, int, 0644);
+
+          static int __init force_max_freq_init(void) {
+              struct cpufreq_policy *policy = cpufreq_cpu_get(target_cpu);
+              int ret;
+
+              if (!policy) return -ENODEV;
+
+              ret = freq_qos_add_request(&policy->constraints, 
+                                         &min_freq_req, 
+                                         FREQ_QOS_MIN, 
+                                         policy->cpuinfo.max_freq);
+              cpufreq_cpu_put(policy);
+              return ret < 0 ? ret : 0;
+          }
+
+          static void __exit force_max_freq_exit(void) {
+              freq_qos_remove_request(&min_freq_req);
+          }
+
+          module_init(force_max_freq_init);
+          module_exit(force_max_freq_exit);
+          EOF
+          
+          # 将模块挂载到内核构建系统
+          echo 'obj-y += force_max/' >> drivers/Makefile
           
       - name: 添加 KSU & 其他配置项
         run: |
@@ -775,11 +824,12 @@ jobs:
         with:
           path: ${{ github.workspace }}/kernel_workspace/common/out/drivers/tango32/tango32.ko
           archive: false
-      - name: Upload out
+      - name: Upload force_max module
         uses: actions/upload-artifact@v7
         with:
-          path: ${{ github.workspace }}/kernel_workspace/common/out/
-          archive: true
+          path: ${{ github.workspace }}/kernel_workspace/common/out/drivers/force_max/force_max.ko
+          archive: false
+          
           
   release:
     needs: build
@@ -797,6 +847,7 @@ jobs:
           path: ./release_zips
           skip-decompress: true
 
+          
       - name: 设置环境变量
         run: |
           CLEAN_SUB_VERSION="${{ env.SUB_VERSION }}"
