@@ -48,8 +48,8 @@ jobs:
             KERNEL_URL="https://github.com/cctv18/android_kernel_common_oneplus_sm8845/archive/refs/heads/oneplus/sm8845_b_16.0.0_ace_6t.zip"
             KERNEL_DIR="android_kernel_common_oneplus_sm8845-oneplus-sm8845_b_16.0.0_ace_6t"
           elif [[ "$KERNEL_SOURCE" == "sm8845_6.12.23" ]]; then
-            KERNEL_URL="https://github.com/cctv18/android_kernel_common_oneplus_sm8845/archive/refs/heads/oneplus/sm8850_v_16.0.0_oneplus_15.zip"
-            KERNEL_DIR="android_kernel_common_oneplus_sm8845-oneplus-sm8850_v_16.0.0_oneplus_15"
+            KERNEL_URL="https://github.com/cctv18/android_kernel_common_oneplus_sm8845/archive/refs/heads/oneplus/sm8845_b_16.0.0_oneplus_15r.zip"
+            KERNEL_DIR="android_kernel_common_oneplus_sm8845-oneplus-sm8845_b_16.0.0_oneplus_15r"
           elif [[ "$KERNEL_SOURCE" == "mt6993_6.12.23" ]]; then
             KERNEL_URL="https://github.com/cctv18/android_kernel_oppo_mt6993/archive/refs/heads/oppo/mt6993_b_16.0.0_find_x9.zip"
             KERNEL_DIR="android_kernel_oppo_mt6993-oppo-mt6993_b_16.0.0_find_x9"
