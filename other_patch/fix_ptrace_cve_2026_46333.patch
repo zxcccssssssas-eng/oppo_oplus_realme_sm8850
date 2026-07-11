@@ -1,0 +1,70 @@
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 3613c3f43b83e3..540431e31681b5 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -805,6 +805,9 @@ struct task_struct {
+ 	 */
+ 	unsigned			sched_remote_wakeup:1;
+ 
++	/* Save user-dumpable when mm goes away */
++	unsigned			user_dumpable:1;
++
+ 	/* Bit to tell LSMs we're in execve(): */
+ 	unsigned			in_execve:1;
+ 	unsigned			in_iowait:1;
+diff --git a/kernel/exit.c b/kernel/exit.c
+index cfdf2d275bba80..99ab6d7a09cee6 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -528,6 +528,7 @@ static void exit_mm(void)
+ 	BUG_ON(mm != current->active_mm);
+ 	/* more a memory barrier than a real lock */
+ 	task_lock(current);
++	current->user_dumpable = (get_dumpable(mm) == SUID_DUMP_USER);
+ 	current->mm = NULL;
+ 	mmap_read_unlock(mm);
+ 	enter_lazy_tlb(mm, current);
+diff --git a/kernel/ptrace.c b/kernel/ptrace.c
+index aab480e24bd60a..fb21c2bf55c37c 100644
+--- a/kernel/ptrace.c
++++ b/kernel/ptrace.c
+@@ -287,11 +287,24 @@ static bool ptrace_has_cap(struct user_namespace *ns, unsigned int mode)
+ 	return ns_capable(ns, CAP_SYS_PTRACE);
+ }
+ 
++static bool task_still_dumpable(struct task_struct *task, unsigned int mode)
++{
++	struct mm_struct *mm = task->mm;
++	if (mm) {
++		if (get_dumpable(mm) == SUID_DUMP_USER)
++			return true;
++		return ptrace_has_cap(mm->user_ns, mode);
++	}
++
++	if (task->user_dumpable)
++		return true;
++	return ptrace_has_cap(&init_user_ns, mode);
++}
++
+ /* Returns 0 on success, -errno on denial. */
+ static int __ptrace_may_access(struct task_struct *task, unsigned int mode)
+ {
+ 	const struct cred *cred = current_cred(), *tcred;
+-	struct mm_struct *mm;
+ 	kuid_t caller_uid;
+ 	kgid_t caller_gid;
+ 
+@@ -352,11 +365,8 @@ static int __ptrace_may_access(struct task_struct *task, unsigned int mode)
+ 	 * Pairs with a write barrier in commit_creds().
+ 	 */
+ 	smp_rmb();
+-	mm = task->mm;
+-	if (mm &&
+-	    ((get_dumpable(mm) != SUID_DUMP_USER) &&
+-	     !ptrace_has_cap(mm->user_ns, mode)))
+-	    return -EPERM;
++	if (!task_still_dumpable(task, mode))
++		return -EPERM;
+ 
+ 	return security_ptrace_access_check(task, mode);
+ }
