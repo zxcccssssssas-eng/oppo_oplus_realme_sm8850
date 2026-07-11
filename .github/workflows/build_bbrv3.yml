@@ -1,0 +1,163 @@
+name: Build BBRv3 Kernel Module
+
+env:
+  TZ: Asia/Shanghai
+  KERNEL_VERSION: '6.12'
+  SUB_VERSION: '38'
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_source:
+        description: 'Kernel source to build against'
+        required: true
+        type: choice
+        default: 'sm8845_6.12.38'
+        options:
+          - 'sm8845_6.12.38'
+          - 'sm8845_6.12.23'
+          - 'mt6993_6.12.23'
+          - 'gki_6.12.30'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-mark hold firefox
+          sudo apt-mark hold libc-bin
+          sudo apt purge man-db
+          sudo rm -rf /var/lib/man-db/auto-update
+          sudo apt update
+          sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev libdw-dev aria2 zip unzip
+          echo "Build dependencies installed!"
+
+      - name: Download kernel source and toolchain
+        run: |
+          rm -rf kernel_workspace
+          mkdir kernel_workspace
+          cd kernel_workspace
+
+          echo "Downloading kernel source..."
+          KERNEL_SOURCE="${{ github.event.inputs.kernel_source }}"
+          if [[ "$KERNEL_SOURCE" == "sm8845_6.12.38" ]]; then
+            KERNEL_URL="https://github.com/cctv18/android_kernel_common_oneplus_sm8845/archive/refs/heads/oneplus/sm8845_b_16.0.0_ace_6t.zip"
+            KERNEL_DIR="android_kernel_common_oneplus_sm8845-oneplus-sm8845_b_16.0.0_ace_6t"
+          elif [[ "$KERNEL_SOURCE" == "sm8845_6.12.23" ]]; then
+            KERNEL_URL="https://github.com/cctv18/android_kernel_common_oneplus_sm8845/archive/refs/heads/oneplus/sm8845_b_16.0.0_ace.zip"
+            KERNEL_DIR="android_kernel_common_oneplus_sm8845-oneplus-sm8845_b_16.0.0_ace"
+          elif [[ "$KERNEL_SOURCE" == "mt6993_6.12.23" ]]; then
+            KERNEL_URL="https://github.com/cctv18/android_kernel_oppo_mt6993/archive/refs/heads/oneplus/mt6993_b_16.0.0_find_x9.zip"
+            KERNEL_DIR="android_kernel_oppo_mt6993-oneplus-mt6993_b_16.0.0_find_x9"
+          elif [[ "$KERNEL_SOURCE" == "gki_6.12.30" ]]; then
+            KERNEL_URL="https://github.com/cctv18/android_gki_kernel_common/archive/refs/heads/main.zip"
+            KERNEL_DIR="android_gki_kernel_common-main"
+          fi
+
+          echo "Downloading from: $KERNEL_URL"
+          aria2c -s16 -x16 -k1M "$KERNEL_URL" -o common.zip
+          unzip -q common.zip
+          mv "$KERNEL_DIR" common
+          rm -rf common.zip
+
+      - name: Download toolchain
+        run: |
+          cd kernel_workspace
+
+          echo "Downloading Clang 19..."
+          mkdir -p clang19
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/clang-r536225.zip -o clang.zip
+          unzip -q clang.zip -d clang19
+          rm -rf clang.zip &
+
+          echo "Downloading build tools..."
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/build-tools.zip -o build-tools.zip
+          unzip -q build-tools.zip
+          rm -rf build-tools.zip &
+
+          wait
+          echo "Toolchain ready!"
+
+      - name: Prepare kernel source for module build
+        run: |
+          cd kernel_workspace/common
+          echo "Configuring kernel..."
+
+          make ARCH=arm64 gki_defconfig
+
+          # Enable required TCP congestion control infrastructure
+          echo "CONFIG_TCP_CONG_ADVANCED=y" >> arch/arm64/configs/gki_defconfig
+
+          make ARCH=arm64 olddefconfig
+
+          echo "Preparing module build (modules_prepare)..."
+          make -j$(nproc --all) ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules_prepare 2>&1 | tail -20
+
+      - name: Build BBRv3 kernel module
+        run: |
+          WORKDIR="$(pwd)"
+          export PATH="$WORKDIR/kernel_workspace/build-tools/bin:$PATH"
+          export PATH="$WORKDIR/kernel_workspace/clang19/bin:$PATH"
+          
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CC=clang
+          export HOSTCC=clang
+          export LD=ld.lld
+          export HOSTLD=ld.lld
+          export LLVM=1 LLVM_IAS=1
+
+          echo "Building BBRv3 kernel module..."
+          KERNEL_SRC="$WORKDIR/kernel_workspace/common"
+          BBRV3_DIR="$WORKDIR/bbrv3"
+
+          echo "Kernel source: $KERNEL_SRC"
+          echo "BBRv3 module dir: $BBRV3_DIR"
+
+          make -C "$KERNEL_SRC" M="$BBRV3_DIR" modules -j$(nproc --all) 2>&1
+
+          echo "Build completed!"
+          echo "Module files:"
+          find "$BBRV3_DIR" -name "*.ko" -type f
+
+      - name: Collect module artifacts
+        run: |
+          mkdir -p artifacts
+          KERNEL_SRC="$PWD/kernel_workspace/common"
+          KERNEL_REL=$(make -C "$KERNEL_SRC" -s kernelrelease 2>/dev/null || echo "unknown")
+          
+          cp bbrv3/tcp_bbrv3.ko artifacts/
+          cp bbrv3/Kconfig artifacts/
+          cp bbrv3/Makefile artifacts/
+          
+          # Create module information
+          echo "BBRv3 Kernel Module" > artifacts/README.txt
+          echo "====================" >> artifacts/README.txt
+          echo "" >> artifacts/README.txt
+          echo "Built for kernel: $KERNEL_REL" >> artifacts/README.txt
+          echo "Source: https://github.com/google/bbr (v3 branch)" >> artifacts/README.txt
+          echo "" >> artifacts/README.txt
+          echo "Usage:" >> artifacts/README.txt
+          echo "  insmod tcp_bbrv3.ko" >> artifacts/README.txt
+          echo "  sysctl net.ipv4.tcp_congestion_control=bbrv3" >> artifacts/README.txt
+          echo "" >> artifacts/README.txt
+          echo "To verify it's loaded:" >> artifacts/README.txt
+          echo "  sysctl net.ipv4.tcp_available_congestion_control" >> artifacts/README.txt
+          echo "" >> artifacts/README.txt
+          echo "Built on: $(date -u)" >> artifacts/README.txt
+          
+          # Show module info
+          echo "--- Module Info ---"
+          modinfo bbrv3/tcp_bbrv3.ko || echo "modinfo not available (cross-compiled)"
+          ls -la bbrv3/tcp_bbrv3.ko || echo "Module file not found!"
+
+      - name: Upload BBRv3 module artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: bbrv3-module
+          path: artifacts/
+          archive: false

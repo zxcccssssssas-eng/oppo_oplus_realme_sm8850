@@ -1,0 +1,18 @@
+config TCP_CONG_BBRV3
+	tristate "BBRv3 TCP congestion control"
+	default m
+	help
+	  BBRv3 (Bottleneck Bandwidth and RTT v3) is a model-based congestion
+	  control algorithm that aims for low queues, low loss, and bounded
+	  Reno/CUBIC coexistence. It uses measurements of bandwidth and RTT,
+	  as well as packet loss and/or ECN signals to maintain a model of
+	  the network path.
+
+	  BBRv3 improves upon BBRv1 with better fairness, reduced
+	  retransmissions, and improved loss/ECN handling. Built as a separate
+	  loadable kernel module (tcp_bbrv3.ko).
+
+	  This is an out-of-tree build of the Google BBRv3 implementation from:
+	  https://github.com/google/bbr
+
+	  To use: modprobe tcp_bbrv3 && sysctl net.ipv4.tcp_congestion_control=bbrv3
