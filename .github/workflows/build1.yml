@@ -389,6 +389,14 @@ jobs:
           patch -p1 -F 3 < fix_ghostlock_cve_2026_43499.patch || true
           echo "CVE-2026-43499 修复补丁应用完成！"
 
+      - name: 应用 CopyFail (CVE-2026-31431) 修复补丁
+        run: |
+          echo "正在应用 CopyFail (CVE-2026-31431) 修复补丁..."
+          cd kernel_workspace/common
+          wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/other_patch/fix_copyfail_cve_2026_31431.patch
+          patch -p1 -F 3 < fix_copyfail_cve_2026_31431.patch || true
+          echo "CVE-2026-31431 修复补丁应用完成！"
+
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
         run: |
