@@ -394,7 +394,15 @@ jobs:
           cd kernel_workspace/common
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/other_patch/lz4kd.patch
           patch -p1 -F 3 < lz4kd.patch || true
-          
+
+      - name: 应用 CVE-2026-43499 (GhostLock) 修复补丁
+        run: |
+          echo "正在应用 CVE-2026-43499 (GhostLock) 修复补丁..."
+          cd kernel_workspace/common
+          wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/other_patch/fix_ghostlock_cve_2026_43499.patch
+          patch -p1 -F 3 < fix_ghostlock_cve_2026_43499.patch || true
+          echo "CVE-2026-43499 修复补丁应用完成！"
+
       - name: 添加SUSFS 配置项
         if: inputs.susfs_enable
         run: |

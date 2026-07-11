@@ -262,6 +262,14 @@ else
   cd "$WORKDIR/kernel_workspace"
 fi
 
+# ===== 应用 CVE-2026-43499 GhostLock 修复补丁 =====
+echo ">>> 正在应用 CVE-2026-43499 (GhostLock) 修复补丁..."
+cp "$SCRIPT_DIR/../other_patch/fix_ghostlock_cve_2026_43499.patch" "$WORKDIR/kernel_workspace/common/"
+cd "$WORKDIR/kernel_workspace/common"
+patch -p1 -F 3 < fix_ghostlock_cve_2026_43499.patch || true
+echo ">>> CVE-2026-43499 修复补丁应用完成！"
+cd "$WORKDIR/kernel_workspace"
+
 # ===== 添加 defconfig 配置项 =====
 echo ">>> 添加 defconfig 配置项..."
 DEFCONFIG_FILE=./common/arch/arm64/configs/gki_defconfig

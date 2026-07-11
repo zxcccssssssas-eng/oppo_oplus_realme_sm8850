@@ -1,0 +1,71 @@
+From: Keenan Dong <keenan.dong@...>
+Date: Tue, 21 Apr 2026 00:00:00 +0000
+Subject: [PATCH] rtmutex: Use waiter::task instead of current in remove_waiter()
+
+remove_waiter() is used by the slowlock paths, but it is also used for
+proxy-lock rollback in rt_mutex_start_proxy_lock() when invoked from
+futex_requeue(). In the latter case waiter::task is not current, but
+remove_waiter() operates on current for the dequeue operation. That
+results in several problems:
+
+1) the rbtree dequeue happens without waiter::task::pi_lock being held
+2) the waiter task's pi_blocked_on state is not cleared, which leaves
+   a dangling pointer primed for UAF around.
+3) rt_mutex_adjust_prio_chain() operates on the wrong top priority
+   waiter task
+
+Use waiter::task instead of current in all related operations in
+remove_waiter() to cure those problems.
+
+[ tglx: Fixup rt_mutex_adjust_prio_chain(), add a comment and amend
+  the changelog ]
+
+CVE: CVE-2026-43499
+Signed-off-by: Keenan Dong <keenan.dong@...>
+Signed-off-by: Thomas Gleixner <tglx@...>
+---
+ kernel/locking/rtmutex.c | 13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/kernel/locking/rtmutex.c b/kernel/locking/rtmutex.c
+--- a/kernel/locking/rtmutex.c
++++ b/kernel/locking/rtmutex.c
+@@ -1544,21 +1544,27 @@
+  *
+  * Must be called with lock->wait_lock held and interrupts disabled. It must
+  * have just failed to try_to_take_rt_mutex().
++ *
++ * When invoked from rt_mutex_start_proxy_lock() waiter::task != current !
+  */
+ static void __sched remove_waiter(struct rt_mutex_base *lock,
+ 				  struct rt_mutex_waiter *waiter)
+ 	__must_hold(&lock->wait_lock)
+ {
+ 	bool is_top_waiter = (waiter == rt_mutex_top_waiter(lock));
+ 	struct task_struct *owner = rt_mutex_owner(lock);
++	struct task_struct *waiter_task = waiter->task;
+ 	struct rt_mutex_base *next_lock;
+ 
+ 	lockdep_assert_held(&lock->wait_lock);
+ 
+-	raw_spin_lock(&current->pi_lock);
++	raw_spin_lock(&waiter_task->pi_lock);
+ 	rt_mutex_dequeue(lock, waiter);
+-	current->pi_blocked_on = NULL;
+-	raw_spin_unlock(&current->pi_lock);
++	waiter_task->pi_blocked_on = NULL;
++	raw_spin_unlock(&waiter_task->pi_lock);
+ 
+ 	/*
+ 	 * Only update priority if the waiter was the highest priority
+@@ -1594,7 +1597,7 @@
+ 	raw_spin_unlock_irq(&lock->wait_lock);
+ 
+ 	rt_mutex_adjust_prio_chain(owner, RT_MUTEX_MIN_CHAINWALK, lock,
+-				   next_lock, NULL, current);
++				   next_lock, NULL, waiter_task);
+ 
+ 	raw_spin_lock_irq(&lock->wait_lock);
+ }
+-- 
+2.43.0
