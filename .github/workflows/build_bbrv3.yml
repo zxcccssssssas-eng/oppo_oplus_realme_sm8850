@@ -36,7 +36,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev libdw-dev aria2 zip unzip
           echo "Build dependencies installed!"
 
-      - name: Download kernel source and toolchain
+      - name: Download kernel source
         run: |
           rm -rf kernel_workspace
           mkdir kernel_workspace
@@ -48,14 +48,14 @@ jobs:
             KERNEL_URL="https://github.com/cctv18/android_kernel_common_oneplus_sm8845/archive/refs/heads/oneplus/sm8845_b_16.0.0_ace_6t.zip"
             KERNEL_DIR="android_kernel_common_oneplus_sm8845-oneplus-sm8845_b_16.0.0_ace_6t"
           elif [[ "$KERNEL_SOURCE" == "sm8845_6.12.23" ]]; then
-            KERNEL_URL="https://github.com/cctv18/android_kernel_common_oneplus_sm8845/archive/refs/heads/oneplus/sm8845_b_16.0.0_ace.zip"
-            KERNEL_DIR="android_kernel_common_oneplus_sm8845-oneplus-sm8845_b_16.0.0_ace"
+            KERNEL_URL="https://github.com/cctv18/android_kernel_common_oneplus_sm8845/archive/refs/heads/oneplus/sm8850_v_16.0.0_oneplus_15.zip"
+            KERNEL_DIR="android_kernel_common_oneplus_sm8845-oneplus-sm8850_v_16.0.0_oneplus_15"
           elif [[ "$KERNEL_SOURCE" == "mt6993_6.12.23" ]]; then
-            KERNEL_URL="https://github.com/cctv18/android_kernel_oppo_mt6993/archive/refs/heads/oneplus/mt6993_b_16.0.0_find_x9.zip"
-            KERNEL_DIR="android_kernel_oppo_mt6993-oneplus-mt6993_b_16.0.0_find_x9"
+            KERNEL_URL="https://github.com/cctv18/android_kernel_oppo_mt6993/archive/refs/heads/oppo/mt6993_b_16.0.0_find_x9.zip"
+            KERNEL_DIR="android_kernel_oppo_mt6993-oppo-mt6993_b_16.0.0_find_x9"
           elif [[ "$KERNEL_SOURCE" == "gki_6.12.30" ]]; then
-            KERNEL_URL="https://github.com/cctv18/android_gki_kernel_common/archive/refs/heads/main.zip"
-            KERNEL_DIR="android_gki_kernel_common-main"
+            KERNEL_URL="https://github.com/cctv18/android_gki_kernel_common/archive/refs/heads/android16-6.12-2025-06.zip"
+            KERNEL_DIR="android_gki_kernel_common-android16-6.12-2025-06"
           fi
 
           echo "Downloading from: $KERNEL_URL"
@@ -84,18 +84,27 @@ jobs:
 
       - name: Prepare kernel source for module build
         run: |
+          WORKDIR="$(pwd)"
+          export PATH="$WORKDIR/kernel_workspace/clang19/bin:$PATH"
+          export PATH="$WORKDIR/kernel_workspace/build-tools/bin:$PATH"
+
           cd kernel_workspace/common
+
           echo "Configuring kernel..."
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CC=clang
+          export HOSTCC=clang
+          export LLVM=1 LLVM_IAS=1
 
-          make ARCH=arm64 gki_defconfig
+          make ARCH=arm64 gki_defconfig 2>&1 | tail -5
 
-          # Enable required TCP congestion control infrastructure
           echo "CONFIG_TCP_CONG_ADVANCED=y" >> arch/arm64/configs/gki_defconfig
 
-          make ARCH=arm64 olddefconfig
+          make ARCH=arm64 olddefconfig 2>&1 | tail -5
 
           echo "Preparing module build (modules_prepare)..."
-          make -j$(nproc --all) ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules_prepare 2>&1 | tail -20
+          make -j$(nproc --all) ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 modules_prepare 2>&1 | tail -20
 
       - name: Build BBRv3 kernel module
         run: |
