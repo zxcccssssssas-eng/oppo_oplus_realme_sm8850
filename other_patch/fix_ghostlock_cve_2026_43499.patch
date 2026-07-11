@@ -28,18 +28,10 @@ Signed-off-by: Thomas Gleixner <tglx@...>
  1 file changed, 9 insertions(+), 4 deletions(-)
 
 diff --git a/kernel/locking/rtmutex.c b/kernel/locking/rtmutex.c
+index 1111111..2222222 100644
 --- a/kernel/locking/rtmutex.c
 +++ b/kernel/locking/rtmutex.c
-@@ -1544,21 +1544,27 @@
-  *
-  * Must be called with lock->wait_lock held and interrupts disabled. It must
-  * have just failed to try_to_take_rt_mutex().
-+ *
-+ * When invoked from rt_mutex_start_proxy_lock() waiter::task != current !
-  */
- static void __sched remove_waiter(struct rt_mutex_base *lock,
- 				  struct rt_mutex_waiter *waiter)
- 	__must_hold(&lock->wait_lock)
+@@ -1542,14 +1542,15 @@
  {
  	bool is_top_waiter = (waiter == rt_mutex_top_waiter(lock));
  	struct task_struct *owner = rt_mutex_owner(lock);
@@ -58,7 +50,7 @@ diff --git a/kernel/locking/rtmutex.c b/kernel/locking/rtmutex.c
  
  	/*
  	 * Only update priority if the waiter was the highest priority
-@@ -1594,7 +1597,7 @@
+@@ -1585,7 +1586,7 @@
  	raw_spin_unlock_irq(&lock->wait_lock);
  
  	rt_mutex_adjust_prio_chain(owner, RT_MUTEX_MIN_CHAINWALK, lock,
@@ -67,5 +59,3 @@ diff --git a/kernel/locking/rtmutex.c b/kernel/locking/rtmutex.c
  
  	raw_spin_lock_irq(&lock->wait_lock);
  }
--- 
-2.43.0
