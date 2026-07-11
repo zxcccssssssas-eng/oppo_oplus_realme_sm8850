@@ -1,15 +1,14 @@
 diff --git a/crypto/af_alg.c b/crypto/af_alg.c
-index c2fd9cd86c5efa..8e0199394984d8 100644
+index 6f2f914f0f7d..a3b81f4d7cb4 100644
 --- a/crypto/af_alg.c
 +++ b/crypto/af_alg.c
-@@ -637,15 +637,13 @@ static int af_alg_alloc_tsgl(struct sock *sk)
+@@ -635,15 +635,11 @@ void af_alg_wmem_wakeup(struct sock *sk)
  /**
   * af_alg_count_tsgl - Count number of TX SG entries
   *
 - * The counting starts from the beginning of the SGL to @bytes. If
 - * an @offset is provided, the counting of the SG entries starts at the @offset.
-+ * The counting starts from the beginning of the SGL to @bytes.
-  *
+- *
   * @sk: socket of connection to user space
   * @bytes: Count the number of SG entries holding given number of bytes.
 - * @offset: Start the counting of SG entries from the given offset.
@@ -20,7 +19,7 @@ index c2fd9cd86c5efa..8e0199394984d8 100644
  {
  	const struct alg_sock *ask = alg_sk(sk);
  	const struct af_alg_ctx *ctx = ask->private;
-@@ -660,25 +658,11 @@ unsigned int af_alg_count_tsgl(struct sock *sk, size_t bytes, size_t offset)
+@@ -658,25 +654,12 @@ unsigned int af_alg_count_tsgl(struct sock *sk, size_t bytes, size_t offset)
  		const struct scatterlist *sg = sgl->sg;
  
  		for (i = 0; i < sgl->cur; i++) {
@@ -37,7 +36,7 @@ index c2fd9cd86c5efa..8e0199394984d8 100644
 -
 -			offset = 0;
  			sgl_count++;
--
+ 
 -			/* If we have seen requested number of bytes, stop */
 -			if (bytes_count >= bytes)
 +			if (sg[i].length >= bytes)
@@ -48,21 +47,24 @@ index c2fd9cd86c5efa..8e0199394984d8 100644
  		}
  	}
  
-@@ -690,19 +674,14 @@ EXPORT_SYMBOL_GPL(af_alg_count_tsgl);
+@@ -688,19 +671,15 @@ EXPORT_SYMBOL_GPL(af_alg_count_tsgl);
   * af_alg_pull_tsgl - Release the specified buffers from TX SGL
   *
   * If @dst is non-null, reassign the pages to @dst. The caller must release
 - * the pages. If @dst_offset is given only reassign the pages to @dst starting
 - * at the @dst_offset (byte). The caller must ensure that @dst is large
 - * enough (e.g. by using af_alg_count_tsgl with the same offset).
-+ * the pages.
++ * the pages. The caller must ensure that @dst is large enough to hold the
++ * reassigned pages.
   *
   * @sk: socket of connection to user space
   * @used: Number of bytes to pull from TX SGL
-  * @dst: If non-NULL, buffer is reassigned to dst SGL instead of releasing. The
-  *	 caller must release the buffers in dst.
+- * @dst: If non-NULL, buffer is reassigned to dst SGL instead of releasing. The
+- *	 caller must release the buffers in dst.
 - * @dst_offset: Reassign the TX SGL from given offset. All buffers before
 - *	        reaching the offset is released.
++ * @dst: If non-NULL, buffer is reassigned to dst SGL instead of releasing.
++ *	 The caller must release the buffers in dst.
   */
 -void af_alg_pull_tsgl(struct sock *sk, size_t used, struct scatterlist *dst,
 -		      size_t dst_offset)
@@ -70,9 +72,14 @@ index c2fd9cd86c5efa..8e0199394984d8 100644
  {
  	struct alg_sock *ask = alg_sk(sk);
  	struct af_alg_ctx *ctx = ask->private;
-@@ -727,18 +706,10 @@ void af_alg_pull_tsgl(struct sock *sk, size_t used, struct scatterlist *dst,
- 			 * SG entries in dst.
- 			 */
+@@ -720,23 +699,16 @@ void af_alg_pull_tsgl(struct sock *sk, size_t used, struct scatterlist *dst,
+ 			if (!page)
+ 				continue;
+ 
+-			/*
+-			 * Assumption: caller created af_alg_count_tsgl(len)
+-			 * SG entries in dst.
+-			 */
  			if (dst) {
 -				if (dst_offset >= plen) {
 -					/* discard page before offset */
@@ -86,29 +93,26 @@ index c2fd9cd86c5efa..8e0199394984d8 100644
 -					dst_offset = 0;
 -					j++;
 -				}
-+				/* reassign page to dst after offset */
++				/*
++				 * Assumption: caller created af_alg_count_tsgl(len)
++				 * SG entries in dst.
++				 */
 +				get_page(page);
-+				sg_set_page(dst + j, page, plen, sg[i].offset);
++				sg_set_page(dst + j, page,
++					    plen,
++					    sg[i].offset);
 +				j++;
  			}
  
  			sg[i].length -= plen;
 diff --git a/crypto/algif_aead.c b/crypto/algif_aead.c
-index 79b016a899a1ef..dda15bb05e892d 100644
+index a53fe1b21381..5d2e02ef65ca 100644
 --- a/crypto/algif_aead.c
 +++ b/crypto/algif_aead.c
-@@ -26,7 +26,6 @@
- #include <crypto/internal/aead.h>
- #include <crypto/scatterwalk.h>
- #include <crypto/if_alg.h>
--#include <crypto/skcipher.h>
- #include <linux/init.h>
- #include <linux/list.h>
- #include <linux/kernel.h>
-@@ -72,9 +71,8 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
- 	struct alg_sock *pask = alg_sk(psk);
- 	struct af_alg_ctx *ctx = ask->private;
- 	struct crypto_aead *tfm = pask->private;
+@@ -96,9 +96,8 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
+ 	struct aead_tfm *aeadc = pask->private;
+ 	struct crypto_aead *tfm = aeadc->aead;
+ 	struct crypto_sync_skcipher *null_tfm = aeadc->null_tfm;
 -	unsigned int i, as = crypto_aead_authsize(tfm);
 +	unsigned int as = crypto_aead_authsize(tfm);
  	struct af_alg_async_req *areq;
@@ -116,14 +120,9 @@ index 79b016a899a1ef..dda15bb05e892d 100644
  	struct scatterlist *rsgl_src, *tsgl_src = NULL;
  	int err = 0;
  	size_t used = 0;		/* [in]  TX bufs to be en/decrypted */
-@@ -154,23 +152,24 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
- 		outlen -= less;
+@@ -179,107 +178,44 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
  	}
  
-+	/*
-+	 * Create a per request TX SGL for this request which tracks the
-+	 * SG entries from the global TX SGL.
-+	 */
  	processed = used + ctx->aead_assoclen;
 -	list_for_each_entry_safe(tsgl, tmp, &ctx->tsgl_list, list) {
 -		for (i = 0; i < tsgl->cur; i++) {
@@ -139,11 +138,22 @@ index 79b016a899a1ef..dda15bb05e892d 100644
 -	}
 -	if (processed && !tsgl_src) {
 -		err = -EFAULT;
++
++	/* Use the RX SGL as destination for crypto op. */
++	rsgl_src = areq->first_rsgl.sgl.sgt.sgl;
++
++	/*
++	 * Create TX SGL for this request from the global TX SGL.
++	 * This operates out-of-place: the TX SGL is the source, and the
++	 * RX SGL is the destination.  This avoids the race condition where
++	 * user space could concurrently modify TX data already processed
++	 * by the crypto hardware.
++	 */
 +	areq->tsgl_entries = af_alg_count_tsgl(sk, processed);
 +	if (!areq->tsgl_entries)
 +		areq->tsgl_entries = 1;
 +	areq->tsgl = sock_kmalloc(sk, array_size(sizeof(*areq->tsgl),
-+					         areq->tsgl_entries),
++						 areq->tsgl_entries),
 +				  GFP_KERNEL);
 +	if (!areq->tsgl) {
 +		err = -ENOMEM;
@@ -151,23 +161,30 @@ index 79b016a899a1ef..dda15bb05e892d 100644
  	}
 +	sg_init_table(areq->tsgl, areq->tsgl_entries);
 +	af_alg_pull_tsgl(sk, processed, areq->tsgl);
-+	tsgl_src = areq->tsgl;
  
  	/*
- 	 * Copy of AAD from source to destination
-@@ -179,76 +178,15 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
- 	 * when user space uses an in-place cipher operation, the kernel
- 	 * will copy the data as it does not see whether such in-place operation
- 	 * is initiated.
+-	 * Copy of AAD from source to destination
+-	 *
+-	 * The AAD is copied to the destination buffer without change. Even
+-	 * when user space uses an in-place cipher operation, the kernel
+-	 * will copy the data as it does not see whether such in-place operation
+-	 * is initiated.
 -	 *
 -	 * To ensure efficiency, the following implementation ensure that the
 -	 * ciphers are invoked to perform a crypto operation in-place. This
 -	 * is achieved by memory management specified as follows.
++	 * Copy only the AAD from the source to the destination buffer.
++	 * The AEAD operation will read from the TX SGL and write to the
++	 * RX SGL, operating fully out-of-place.
  	 */
++	err = crypto_aead_copy_sgl(null_tfm, areq->tsgl, rsgl_src,
++				   ctx->aead_assoclen);
++	if (err)
++		goto free;
  
- 	/* Use the RX SGL as source (and destination) for crypto op. */
- 	rsgl_src = areq->first_rsgl.sgl.sgt.sgl;
- 
+-	/* Use the RX SGL as source (and destination) for crypto op. */
+-	rsgl_src = areq->first_rsgl.sgl.sgt.sgl;
+-
 -	if (ctx->enc) {
 -		/*
 -		 * Encryption operation - The in-place cipher operation is
@@ -179,8 +196,11 @@ index 79b016a899a1ef..dda15bb05e892d 100644
 -		 *	    v	   v
 -		 * RX SGL: AAD || PT || Tag
 -		 */
--		memcpy_sglist(areq->first_rsgl.sgl.sgt.sgl, tsgl_src,
--			      processed);
+-		err = crypto_aead_copy_sgl(null_tfm, tsgl_src,
+-					   areq->first_rsgl.sgl.sgt.sgl,
+-					   processed);
+-		if (err)
+-			goto free;
 -		af_alg_pull_tsgl(sk, processed, NULL, 0);
 -	} else {
 -		/*
@@ -194,8 +214,12 @@ index 79b016a899a1ef..dda15bb05e892d 100644
 -		 * RX SGL: AAD || CT ----+
 -		 */
 -
--		/* Copy AAD || CT to RX SGL buffer for in-place operation. */
--		memcpy_sglist(areq->first_rsgl.sgl.sgt.sgl, tsgl_src, outlen);
+-		 /* Copy AAD || CT to RX SGL buffer for in-place operation. */
+-		err = crypto_aead_copy_sgl(null_tfm, tsgl_src,
+-					   areq->first_rsgl.sgl.sgt.sgl,
+-					   outlen);
+-		if (err)
+-			goto free;
 -
 -		/* Create TX SGL for tag and chain it to RX SGL. */
 -		areq->tsgl_entries = af_alg_count_tsgl(sk, processed,
@@ -226,16 +250,17 @@ index 79b016a899a1ef..dda15bb05e892d 100644
 -			/* no RX SGL present (e.g. authentication only) */
 -			rsgl_src = areq->tsgl;
 -	}
-+	memcpy_sglist(rsgl_src, tsgl_src, ctx->aead_assoclen);
++	tsgl_src = areq->tsgl;
  
- 	/* Initialize the crypto operation */
+-	/* Initialize the crypto operation */
 -	aead_request_set_crypt(&areq->cra_u.aead_req, rsgl_src,
++	/* Initialize the crypto operation with out-of-place SGLs */
 +	aead_request_set_crypt(&areq->cra_u.aead_req, tsgl_src,
  			       areq->first_rsgl.sgl.sgt.sgl, used, ctx->iv);
  	aead_request_set_ad(&areq->cra_u.aead_req, ctx->aead_assoclen);
  	aead_request_set_tfm(&areq->cra_u.aead_req, tfm);
-@@ -450,7 +388,7 @@ static void aead_sock_destruct(struct sock *sk)
- 	struct crypto_aead *tfm = pask->private;
+@@ -514,7 +450,7 @@ static void aead_sock_destruct(struct sock *sk)
+ 	struct crypto_aead *tfm = aeadc->aead;
  	unsigned int ivlen = crypto_aead_ivsize(tfm);
  
 -	af_alg_pull_tsgl(sk, ctx->used, NULL, 0);
@@ -244,10 +269,10 @@ index 79b016a899a1ef..dda15bb05e892d 100644
  	sock_kfree_s(sk, ctx, ctx->len);
  	af_alg_release_parent(sk);
 diff --git a/crypto/algif_skcipher.c b/crypto/algif_skcipher.c
-index 125d395c5e009e..82735e51be108d 100644
+index 2e222625095c..cda0fb6b5f4f 100644
 --- a/crypto/algif_skcipher.c
 +++ b/crypto/algif_skcipher.c
-@@ -138,7 +138,7 @@ static int _skcipher_recvmsg(struct socket *sock, struct msghdr *msg,
+@@ -138,7 +138,7 @@ static int skcipher_recvmsg_core(struct sock *sk, struct msghdr *msg,
  	 * Create a per request TX SGL for this request which tracks the
  	 * SG entries from the global TX SGL.
  	 */
@@ -256,7 +281,7 @@ index 125d395c5e009e..82735e51be108d 100644
  	if (!areq->tsgl_entries)
  		areq->tsgl_entries = 1;
  	areq->tsgl = sock_kmalloc(sk, array_size(sizeof(*areq->tsgl),
-@@ -149,7 +149,7 @@ static int _skcipher_recvmsg(struct socket *sock, struct msghdr *msg,
+@@ -149,7 +149,7 @@ static int skcipher_recvmsg_core(struct sock *sk, struct msghdr *msg,
  		goto free;
  	}
  	sg_init_table(areq->tsgl, areq->tsgl_entries);
@@ -275,10 +300,10 @@ index 125d395c5e009e..82735e51be108d 100644
  	if (ctx->state)
  		sock_kzfree_s(sk, ctx->state, crypto_skcipher_statesize(tfm));
 diff --git a/include/crypto/if_alg.h b/include/crypto/if_alg.h
-index 107b797c33ecf7..0cc8fa749f68d2 100644
+index 3f76aa2b81d4..cf7addc0b5f8 100644
 --- a/include/crypto/if_alg.h
 +++ b/include/crypto/if_alg.h
-@@ -230,9 +230,8 @@ static inline bool af_alg_readable(struct sock *sk)
+@@ -228,9 +228,8 @@ static inline bool af_alg_readable(struct sock *sk)
  	return PAGE_SIZE <= af_alg_rcvbuf(sk);
  }
  
