@@ -341,6 +341,9 @@ static const u32 bbr_bw_probe_base_us = 2 * USEC_PER_SEC;  /* 2 secs */
 /* Use BBR-native probes spread over this many usec: */
 static const u32 bbr_bw_probe_rand_us = 1 * USEC_PER_SEC;  /* 1 secs */
 
+/* Use fast path if app-limited, no loss/ECN, and target cwnd was reached? */
+static const bool bbr_fast_path = true;
+
 static u32 bbr_max_bw(const struct sock *sk);
 static u32 bbr_bw(const struct sock *sk);
 static void bbr_exit_probe_rtt(struct sock *sk);
@@ -2230,34 +2233,6 @@ __bpf_kfunc static u32 bbr_ssthresh(struct sock *sk)
 	return tcp_sk(sk)->snd_ssthresh;
 }
 
-static enum tcp_bbr_phase bbr_get_phase(struct bbr *bbr)
-{
-	switch (bbr->mode) {
-	case BBR_STARTUP:
-		return BBR_PHASE_STARTUP;
-	case BBR_DRAIN:
-		return BBR_PHASE_DRAIN;
-	case BBR_PROBE_BW:
-		break;
-	case BBR_PROBE_RTT:
-		return BBR_PHASE_PROBE_RTT;
-	default:
-		return BBR_PHASE_INVALID;
-	}
-	switch (bbr->cycle_idx) {
-	case BBR_BW_PROBE_UP:
-		return BBR_PHASE_PROBE_BW_UP;
-	case BBR_BW_PROBE_DOWN:
-		return BBR_PHASE_PROBE_BW_DOWN;
-	case BBR_BW_PROBE_CRUISE:
-		return BBR_PHASE_PROBE_BW_CRUISE;
-	case BBR_BW_PROBE_REFILL:
-		return BBR_PHASE_PROBE_BW_REFILL;
-	default:
-		return BBR_PHASE_INVALID;
-	}
-}
-
 static size_t bbr_get_info(struct sock *sk, u32 ext, int *attr,
 			    union tcp_cc_info *info)
 {
@@ -2265,9 +2240,6 @@ static size_t bbr_get_info(struct sock *sk, u32 ext, int *attr,
 	    ext & (1 << (INET_DIAG_VEGASINFO - 1))) {
 		struct bbr *bbr = inet_csk_ca(sk);
 		u64 bw = bbr_bw_bytes_per_sec(sk, bbr_bw(sk));
-		u64 bw_hi = bbr_bw_bytes_per_sec(sk, bbr_max_bw(sk));
-		u64 bw_lo = bbr->bw_lo == ~0U ?
-			~0ULL : bbr_bw_bytes_per_sec(sk, bbr->bw_lo);
 		struct tcp_bbr_info *bbr_info = &info->bbr;
 
 		memset(bbr_info, 0, sizeof(*bbr_info));
@@ -2276,16 +2248,6 @@ static size_t bbr_get_info(struct sock *sk, u32 ext, int *attr,
 		bbr_info->bbr_min_rtt		= bbr->min_rtt_us;
 		bbr_info->bbr_pacing_gain	= bbr->pacing_gain;
 		bbr_info->bbr_cwnd_gain		= bbr->cwnd_gain;
-		bbr_info->bbr_bw_hi_lsb		= (u32)bw_hi;
-		bbr_info->bbr_bw_hi_msb		= (u32)(bw_hi >> 32);
-		bbr_info->bbr_bw_lo_lsb		= (u32)bw_lo;
-		bbr_info->bbr_bw_lo_msb		= (u32)(bw_lo >> 32);
-		bbr_info->bbr_mode		= bbr->mode;
-		bbr_info->bbr_phase		= (__u8)bbr_get_phase(bbr);
-		bbr_info->bbr_version		= (__u8)BBR_VERSION;
-		bbr_info->bbr_inflight_lo	= bbr->inflight_lo;
-		bbr_info->bbr_inflight_hi	= bbr->inflight_hi;
-		bbr_info->bbr_extra_acked	= bbr_extra_acked(sk);
 		*attr = INET_DIAG_BBRINFO;
 		return sizeof(*bbr_info);
 	}
