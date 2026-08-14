@@ -298,9 +298,6 @@ static const u32 bbr_ecn_reprobe_gain = BBR_UNIT * 1 / 2;
 /* Estimate bw probing has gone too far if loss rate exceeds this level. */
 static const u32 bbr_loss_thresh = BBR_UNIT * 2 / 100;  /* 2% loss */
 
-/* Slow down for a packet loss recovered by TLP? */
-static const bool bbr_loss_probe_recovery = true;
-
 /* Exit STARTUP if number of loss marking events in a Recovery round is >= N,
  * and loss rate is higher than bbr_loss_thresh.
  * Disabled if 0.
@@ -344,17 +341,11 @@ static const u32 bbr_bw_probe_base_us = 2 * USEC_PER_SEC;  /* 2 secs */
 /* Use BBR-native probes spread over this many usec: */
 static const u32 bbr_bw_probe_rand_us = 1 * USEC_PER_SEC;  /* 1 secs */
 
-/* Use fast path if app-limited, no loss/ECN, and target cwnd was reached? */
-static const bool bbr_fast_path = true;
-
-/* Use fast ack mode? */
-static const bool bbr_fast_ack_mode = true;
-
 static u32 bbr_max_bw(const struct sock *sk);
 static u32 bbr_bw(const struct sock *sk);
 static void bbr_exit_probe_rtt(struct sock *sk);
 static void bbr_reset_congestion_signals(struct sock *sk);
-static void bbr_run_loss_probe_recovery(struct sock *sk);
+static void __maybe_unused bbr_run_loss_probe_recovery(struct sock *sk);
 
 static void bbr_check_probe_rtt_done(struct sock *sk);
 
@@ -367,8 +358,7 @@ static void bbr_check_probe_rtt_done(struct sock *sk);
  */
 static bool bbr_can_use_ecn(const struct sock *sk)
 {
-	return (tcp_sk(sk)->ecn_flags & TCP_ECN_OK) &&
-	       (tcp_sk(sk)->ecn_flags & TCP_ECN_LOW);
+	return (tcp_sk(sk)->ecn_flags & TCP_ECN_OK);
 }
 
 /* Do we estimate that STARTUP filled the pipe? */
@@ -554,9 +544,6 @@ __bpf_kfunc static void bbr_cwnd_event(struct sock *sk, enum tcp_ca_event event)
 		u32 state = bbr->ce_state;
 		dctcp_ece_ack_update(sk, event, &bbr->prior_rcv_nxt, &state);
 		bbr->ce_state = state;
-	} else if (event == CA_EVENT_TLP_RECOVERY &&
-		   bbr_param(sk, loss_probe_recovery)) {
-		bbr_run_loss_probe_recovery(sk);
 	}
 }
 
@@ -1175,10 +1162,10 @@ static bool bbr_is_inflight_too_high(const struct sock *sk,
 	const struct bbr *bbr = inet_csk_ca(sk);
 	u32 loss_thresh, ecn_thresh;
 
-	if (rs->lost > 0 && rs->tx_in_flight) {
-		loss_thresh = (u64)rs->tx_in_flight * bbr_param(sk, loss_thresh) >>
+	if (rs->losses > 0 && rs->prior_in_flight) {
+		loss_thresh = (u64)rs->prior_in_flight * bbr_param(sk, loss_thresh) >>
 				BBR_SCALE;
-		if (rs->lost > loss_thresh) {
+		if (rs->losses > loss_thresh) {
 			return true;
 		}
 	}
@@ -1216,27 +1203,24 @@ static u32 bbr_inflight_hi_from_lost_skb(const struct sock *sk,
 	pcount = tcp_skb_pcount(skb);
 
 	/* How much data was in flight before this skb? */
-	inflight_prev = rs->tx_in_flight - pcount;
+	inflight_prev = rs->prior_in_flight - pcount;
 	if (inflight_prev < 0) {
-		WARN_ONCE(tcp_skb_tx_in_flight_is_suspicious(
-				  pcount,
-				  TCP_SKB_CB(skb)->sacked,
-				  rs->tx_in_flight),
+		WARN_ONCE(1,
 			  "tx_in_flight: %u pcount: %u reneg: %u",
-			  rs->tx_in_flight, pcount, tcp_sk(sk)->is_sack_reneg);
+			  rs->prior_in_flight, pcount, tcp_sk(sk)->is_sack_reneg);
 		return ~0U;
 	}
 
 	/* How much inflight data was marked lost before this skb? */
-	lost_prev = rs->lost - pcount;
+	lost_prev = rs->losses - pcount;
 	if (WARN_ONCE(lost_prev < 0,
 		      "cwnd: %u ca: %d out: %u lost: %u pif: %u "
-		      "tx_in_flight: %u tx.lost: %u tp->lost: %u rs->lost: %d "
+		      "tx_in_flight: %u tx.lost: %u tp->lost: %u rs->losses: %d "
 		      "lost_prev: %d pcount: %d seq: %u end_seq: %u reneg: %u",
 		      tcp_snd_cwnd(tp), inet_csk(sk)->icsk_ca_state,
 		      tp->packets_out, tp->lost_out, tcp_packets_in_flight(tp),
-		      rs->tx_in_flight, TCP_SKB_CB(skb)->tx.lost, tp->lost,
-		      rs->lost, lost_prev, pcount,
+		      rs->prior_in_flight, tp->lost, tp->lost,
+		      rs->losses, lost_prev, pcount,
 		      TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq,
 		      tp->is_sack_reneg))
 		return ~0U;
@@ -1463,7 +1447,7 @@ static void bbr_advance_latest_delivery_signals(
 	 * that a TLP retransmit plugged a tail loss, we'll want to remember
 	 * how much data the path delivered before the tail loss.
 	 */
-	if (bbr->loss_round_start && !rs->is_acking_tlp_retrans_seq) {
+	if (bbr->loss_round_start) {
 		bbr->bw_latest = ctx->sample_bw;
 		bbr->inflight_latest = rs->delivered;
 	}
@@ -1639,7 +1623,7 @@ static void bbr_handle_inflight_too_high(struct sock *sk,
 	 * samples are not known to be robustly probing bw).
 	 */
 	if (!rs->is_app_limited) {
-		bbr->inflight_hi = max_t(u32, rs->tx_in_flight,
+		bbr->inflight_hi = max_t(u32, rs->prior_in_flight,
 					 (u64)bbr_target_inflight(sk) *
 					 (BBR_UNIT - beta) >> BBR_SCALE);
 	}
@@ -1696,8 +1680,8 @@ static bool bbr_adapt_upper_bounds(struct sock *sk,
 		/* To be resilient to random loss, we must raise bw/inflight_hi
 		 * if we observe in any phase that a higher level is safe.
 		 */
-		if (rs->tx_in_flight > bbr->inflight_hi) {
-			bbr->inflight_hi = rs->tx_in_flight;
+		if (rs->prior_in_flight > bbr->inflight_hi) {
+			bbr->inflight_hi = rs->prior_in_flight;
 		}
 
 		if (bbr->mode == BBR_PROBE_BW &&
@@ -2051,7 +2035,7 @@ __bpf_kfunc static void bbr_main(struct sock *sk, u32 ack, int flag,
 	}
 	bbr_plb(sk, rs, ce_ratio);
 
-	bbr->ecn_in_round  |= (bbr->ecn_eligible && rs->is_ece);
+	bbr->ecn_in_round  |= (bbr->ecn_eligible && rs->delivered_ce > 0);
 	bbr_calculate_bw_sample(sk, rs, &ctx);
 	bbr_update_latest_delivery_signals(sk, rs, &ctx);
 
@@ -2071,7 +2055,7 @@ __bpf_kfunc static void bbr_main(struct sock *sk, u32 ack, int flag,
 out:
 	bbr_advance_latest_delivery_signals(sk, rs, &ctx);
 	bbr->prev_ca_state = inet_csk(sk)->icsk_ca_state;
-	bbr->loss_in_cycle |= rs->lost > 0;
+	bbr->loss_in_cycle |= rs->losses > 0;
 	bbr->ecn_in_cycle  |= rs->delivered_ce > 0;
 }
 
@@ -2151,10 +2135,6 @@ __bpf_kfunc static void bbr_init(struct sock *sk)
 	bbr->alpha_last_delivered_ce = 0;
 	bbr->plb.pause_until = 0;
 
-	tp->fast_ack_mode = bbr_fast_ack_mode ? 1 : 0;
-
-	if (bbr_can_use_ecn(sk))
-		tp->ecn_flags |= TCP_ECN_ECT_PERMANENT;
 }
 
 /* BBR marks the current round trip as a loss round. */
@@ -2191,11 +2171,11 @@ __bpf_kfunc static void bbr_skb_marked_lost(struct sock *sk,
 	 * estimates what happened in the flight leading up to this lost skb,
 	 * then see if the loss rate went too high, and if so at which packet.
 	 */
-	rs.tx_in_flight = scb->tx.in_flight;
-	rs.lost = tp->lost - scb->tx.lost;
+	rs.prior_in_flight = tcp_packets_in_flight(tp);
+	rs.losses = tp->lost;
 	rs.is_app_limited = scb->tx.is_app_limited;
 	if (bbr_is_inflight_too_high(sk, &rs)) {
-		rs.tx_in_flight = bbr_inflight_hi_from_lost_skb(sk, &rs, skb);
+		rs.prior_in_flight = bbr_inflight_hi_from_lost_skb(sk, &rs, skb);
 		bbr_handle_inflight_too_high(sk, &rs);
 	}
 }
@@ -2214,9 +2194,9 @@ static void bbr_run_loss_probe_recovery(struct sock *sk)
 	 * estimates what happened in the flight leading up to this
 	 * loss, then see if the loss rate went too high.
 	 */
-	rs.lost = 1;	/* TLP probe repaired loss of a single segment */
-	rs.tx_in_flight = bbr->inflight_latest + rs.lost;
-	rs.is_app_limited = tp->tlp_orig_data_app_limited;
+	rs.losses = 1;	/* TLP probe repaired loss of a single segment */
+	rs.prior_in_flight = bbr->inflight_latest + rs.losses;
+	rs.is_app_limited = tp->app_limited;
 	if (bbr_is_inflight_too_high(sk, &rs))
 		bbr_handle_inflight_too_high(sk, &rs);
 }
@@ -2347,11 +2327,9 @@ static struct tcp_congestion_ops tcp_bbrv3_cong_ops __read_mostly = {
 	.init		= bbr_init,
 	.cong_control	= bbr_main,
 	.sndbuf_expand	= bbr_sndbuf_expand,
-	.skb_marked_lost = bbr_skb_marked_lost,
 	.undo_cwnd	= bbr_undo_cwnd,
 	.cwnd_event	= bbr_cwnd_event,
 	.ssthresh	= bbr_ssthresh,
-	.tso_segs	= bbr_tso_segs,
 	.get_info	= bbr_get_info,
 	.set_state	= bbr_set_state,
 };
