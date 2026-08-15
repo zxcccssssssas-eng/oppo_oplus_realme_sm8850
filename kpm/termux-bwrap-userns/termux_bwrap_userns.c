@@ -1,18 +1,14 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
  *
- * kpm-bwrap-userns — KernelPatch Module (KPM)
+ * kpm-bwrap-userns — KernelPatch-Next Module (KPM)
  *
  * Allow Termux (and any app process) to run bubblewrap-style sandboxes on
  * Android by permitting the user/mount namespace related syscalls in the
  * seccomp filter applied by zygote.
  *
- * Why: Android's zygote applies a seccomp allowlist to untrusted_app
- * processes that blocks unshare(CLONE_NEWUSER), setns, mount, pivot_root,
- * etc.  bubblewrap needs those to create a user+mount namespace sandbox.
- * This module inline-hooks __secure_computing() and returns "allowed" for
- * exactly the syscalls bubblewrap needs, leaving everything else untouched.
- *
- * Build: see README.md (KPM-Build-Anywhere style, no kernel source needed).
+ * This version never fails in init: it records status and exposes it via
+ * KPM_CTL0 so loading failures can be diagnosed with:
+ *   kpatch kpm ctl0 kpm-bwrap-userns get
  */
 
 #include <log.h>
@@ -21,6 +17,9 @@
 #include <hook.h>
 #include <kallsyms.h>
 #include <linux/printk.h>
+#include <linux/string.h>
+#include <common.h>
+#include <kputils.h>
 
 KPM_NAME("kpm-bwrap-userns");
 KPM_VERSION("0.1.0");
@@ -43,6 +42,9 @@ struct kpm_seccomp_data {
 #define __NR_arm64_setns       268
 
 static unsigned long secure_computing_addr;
+static unsigned long sysctl_perm_addr;
+static long hook_status;
+static char status_msg[128];
 
 static void before_secure_computing(hook_fargs1_t *args, void *udata)
 {
@@ -68,23 +70,65 @@ static void before_secure_computing(hook_fargs1_t *args, void *udata)
 	}
 }
 
+
+static void before_sysctl_perm(hook_fargs3_t *args, void *udata)
+{
+	const char *procname = *(const char **)args->arg1; /* struct ctl_table::procname */
+
+	if (procname && strcmp(procname, "overflowuid") == 0) {
+		args->skip_origin = 1;
+		args->ret = 0; /* allow */
+		logkd("kpm-bwrap-userns: allow sysctl overflowuid\n");
+	}
+}
 static long kpm_init(const char *args, const char *event, void *__user reserved)
 {
+	hook_status = 0;
+	strcpy(status_msg, "init");
+
 	secure_computing_addr = kallsyms_lookup_name("__secure_computing");
 	if (!secure_computing_addr) {
-		pr_err("kpm-bwrap-userns: __secure_computing not found\n");
-		return -1;
+		hook_status = -1;
+		strcpy(status_msg, "KALLSYMS_NOT_FOUND");
+		logkd("kpm-bwrap-userns: KALLSYMS_NOT_FOUND\n");
+		return 0;
 	}
 
 	hook_err_t err = hook_wrap((void *)secure_computing_addr, 1,
 				   before_secure_computing, NULL, NULL);
-	if (err != HOOK_NO_ERR) {
-		pr_err("kpm-bwrap-userns: hook __secure_computing failed: %d\n", err);
-		return -1;
+	hook_status = (long)err;
+	if (err == HOOK_NO_ERR) {
+		strcpy(status_msg, "HOOKED");
+	} else {
+		strcpy(status_msg, "HOOK_ERR");
 	}
+	logkd("kpm-bwrap-userns: addr=%px hook_err=%d\n",
+	      (void *)secure_computing_addr, err);
 
-	logkd("kpm-bwrap-userns: hooked __secure_computing at %px\n",
-	      (void *)secure_computing_addr);
+	sysctl_perm_addr = kallsyms_lookup_name("sysctl_perm");
+	if (sysctl_perm_addr) {
+		hook_err_t err2 = hook_wrap((void *)sysctl_perm_addr, 3,
+					    before_sysctl_perm, NULL, NULL);
+		if (err2 == HOOK_NO_ERR) {
+			strcat(status_msg, "+SYSCTL_OK");
+		} else {
+			strcat(status_msg, "+SYSCTL_ERR");
+		}
+		logkd("kpm-bwrap-userns: sysctl_perm addr=%px hook_err=%d\n",
+		      (void *)sysctl_perm_addr, err2);
+	} else {
+		strcat(status_msg, "+SYSCTL_NF");
+		logkd("kpm-bwrap-userns: sysctl_perm not found\n");
+	}
+	return 0;
+}
+
+static long kpm_ctl0(const char *args, char *__user out_msg, int outlen)
+{
+	char buf[160];
+	strcpy(buf, "status=");
+	strcat(buf, status_msg);
+	compat_copy_to_user(out_msg, buf, strlen(buf) + 1);
 	return 0;
 }
 
@@ -92,8 +136,11 @@ static long kpm_exit(void *__user reserved)
 {
 	if (secure_computing_addr)
 		unhook((void *)secure_computing_addr);
+	if (sysctl_perm_addr)
+		unhook((void *)sysctl_perm_addr);
 	return 0;
 }
 
 KPM_INIT(kpm_init);
+KPM_CTL0(kpm_ctl0);
 KPM_EXIT(kpm_exit);
