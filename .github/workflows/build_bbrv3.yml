@@ -175,4 +175,3 @@ jobs:
         with:
           name: bbrv3-module
           path: artifacts/
-          archive: false
