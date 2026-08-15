@@ -69,3 +69,27 @@ bwrap --ro-bind / / --dev /dev --proc /proc --die-with-parent -- true
 ```
 
 如果不再报 `Creating new namespace failed`，说明 seccomp 已放行。
+
+## KernelPatch-Next 版本
+
+配合 KernelSU Next 的 KPM 支持（原版 KernelSU 不支持 KPM），需要：
+
+1. 编译内核时选择 **KernelPatch Next**（本仓库 `USE_PATCH_LINUX=k`），刷入后
+   `kpatch hello` 应回显 `hello2026`。
+2. 安装 [KPatch-Next-Module](https://github.com/KernelSU-Next/KPatch-Next-Module)
+   （Magisk/KernelSU 模块，提供 kpatch 运行时）。
+3. 把本目录的 `termux_bwrap_userns-next.kpm` 放到：
+   ```
+   /data/adb/kp-next/kpm/termux_bwrap_userns-next.kpm
+   ```
+   开机由模块的 `service.sh` 自动 `kpatch kpm load`。
+
+手动加载：
+
+```bash
+sudo /data/adb/modules/KPatch-Next/bin/kpatch kpm load /data/adb/kp-next/kpm/termux_bwrap_userns-next.kpm
+sudo /data/adb/modules/KPatch-Next/bin/kpatch kpm list
+```
+
+> `termux_bwrap_userns-next.kpm` 使用 KernelSU-Next/KPatch-Next 的头文件编译，
+> 与标准 KernelPatch 版（`termux_bwrap_userns.kpm`）二选一，不要混用。
