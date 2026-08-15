@@ -97,6 +97,9 @@ jobs:
           export HOSTCC=clang
           export LLVM=1 LLVM_IAS=1
 
+          # 扩大 ICSK_CA_PRIV_SIZE 以容纳 BBRv3 的 struct bbr (152B > 104B)
+          sed -i 's#icsk_ca_priv\[104 / sizeof(u64)\]#icsk_ca_priv[160 / sizeof(u64)]#' include/net/inet_connection_sock.h
+
           make ARCH=arm64 gki_defconfig 2>&1 | tail -5
 
           echo "CONFIG_TCP_CONG_ADVANCED=y" >> arch/arm64/configs/gki_defconfig

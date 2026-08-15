@@ -471,6 +471,8 @@ jobs:
           sed -i 's/check_defconfig//' ./common/build.config.gki
           #跳过将uapi标准头安装到 usr/include 目录的不必要操作，节省编译时间
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
+          # 扩大 ICSK_CA_PRIV_SIZE 以容纳 BBRv3 模块的 struct bbr (152B > 104B)
+          sed -i 's#icsk_ca_priv\[104 / sizeof(u64)\]#icsk_ca_priv[160 / sizeof(u64)]#' ./common/include/net/inet_connection_sock.h
           # 启用 Landlock LSM（与 AOSP 官方 GKI android16-6.12 保持一致）
           echo "CONFIG_SECURITY_LANDLOCK=y" >> ./common/arch/arm64/configs/gki_defconfig
           # 6.12内核Rust配置
