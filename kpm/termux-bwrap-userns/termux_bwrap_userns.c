@@ -42,7 +42,7 @@ struct kpm_seccomp_data {
 #define __NR_arm64_setns       268
 
 static unsigned long secure_computing_addr;
-static unsigned long sysctl_perm_addr;
+static unsigned long proc_sys_permission_addr;
 static long hook_status;
 static char status_msg[128];
 
@@ -71,14 +71,15 @@ static void before_secure_computing(hook_fargs1_t *args, void *udata)
 }
 
 
-static void before_sysctl_perm(hook_fargs3_t *args, void *udata)
-{
-	const char *procname = *(const char **)args->arg1; /* struct ctl_table::procname */
+/* MAY_READ = 4；只放开 /proc/sys 的读权限（bwrap 需要读 overflowuid），写权限仍走原检查 */
+#define KPM_MAY_READ 4
 
-	if (procname && strcmp(procname, "overflowuid") == 0) {
+static void before_proc_sys_permission(hook_fargs3_t *args, void *udata)
+{
+	if ((args->arg2 & KPM_MAY_READ) != 0) {
 		args->skip_origin = 1;
-		args->ret = 0; /* allow */
-		logkd("kpm-bwrap-userns: allow sysctl overflowuid\n");
+		args->ret = 0; /* allow read */
+		logkd("kpm-bwrap-userns: allow proc_sys read\n");
 	}
 }
 static long kpm_init(const char *args, const char *event, void *__user reserved)
@@ -105,20 +106,20 @@ static long kpm_init(const char *args, const char *event, void *__user reserved)
 	logkd("kpm-bwrap-userns: addr=%px hook_err=%d\n",
 	      (void *)secure_computing_addr, err);
 
-	sysctl_perm_addr = kallsyms_lookup_name("sysctl_perm");
-	if (sysctl_perm_addr) {
-		hook_err_t err2 = hook_wrap((void *)sysctl_perm_addr, 3,
-					    before_sysctl_perm, NULL, NULL);
+	proc_sys_permission_addr = kallsyms_lookup_name("proc_sys_permission");
+	if (proc_sys_permission_addr) {
+		hook_err_t err2 = hook_wrap((void *)proc_sys_permission_addr, 3,
+					    before_proc_sys_permission, NULL, NULL);
 		if (err2 == HOOK_NO_ERR) {
-			strcat(status_msg, "+SYSCTL_OK");
+			strcat(status_msg, "+PROCSYS_OK");
 		} else {
-			strcat(status_msg, "+SYSCTL_ERR");
+			strcat(status_msg, "+PROCSYS_ERR");
 		}
-		logkd("kpm-bwrap-userns: sysctl_perm addr=%px hook_err=%d\n",
-		      (void *)sysctl_perm_addr, err2);
+		logkd("kpm-bwrap-userns: proc_sys_permission addr=%px hook_err=%d\n",
+		      (void *)proc_sys_permission_addr, err2);
 	} else {
-		strcat(status_msg, "+SYSCTL_NF");
-		logkd("kpm-bwrap-userns: sysctl_perm not found\n");
+		strcat(status_msg, "+PROCSYS_NF");
+		logkd("kpm-bwrap-userns: proc_sys_permission not found\n");
 	}
 	return 0;
 }
@@ -136,8 +137,8 @@ static long kpm_exit(void *__user reserved)
 {
 	if (secure_computing_addr)
 		unhook((void *)secure_computing_addr);
-	if (sysctl_perm_addr)
-		unhook((void *)sysctl_perm_addr);
+	if (proc_sys_permission_addr)
+		unhook((void *)proc_sys_permission_addr);
 	return 0;
 }
 
