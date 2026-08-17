@@ -103,11 +103,15 @@ jobs:
           # 与 fastbuild_6.12.23_gki.yml 的 KERNEL_NAME 保持一致，否则模块 vermagic 与运行内核不匹配
           sed -i 's/CONFIG_LOCALVERSION="-4k"/CONFIG_LOCALVERSION="-android16-5-ga8f88ad96df3-ab13929693-4k"/' arch/arm64/configs/gki_defconfig
 
-          make ARCH=arm64 gki_defconfig 2>&1 | tail -5
-
-          echo "CONFIG_TCP_CONG_ADVANCED=y" >> arch/arm64/configs/gki_defconfig
-
-          make ARCH=arm64 olddefconfig 2>&1 | tail -5
+          if [[ "${{ github.event.inputs.kernel_source }}" == "gki_6.12.23" ]]; then
+            # 使用手机运行内核的真实 .config（/proc/config.gz），保证 module_layout CRC 一致
+            cp "$GITHUB_WORKSPACE/phone_configs/gki_6.12.23.config" .config
+            make ARCH=arm64 olddefconfig 2>&1 | tail -5
+          else
+            make ARCH=arm64 gki_defconfig 2>&1 | tail -5
+            echo "CONFIG_TCP_CONG_ADVANCED=y" >> arch/arm64/configs/gki_defconfig
+            make ARCH=arm64 olddefconfig 2>&1 | tail -5
+          fi
 
           echo "Building kernel (vmlinux + modules) to generate Module.symvers..."
           make -j$(nproc --all) ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=clang LLVM=1 2>&1 | tail -20
