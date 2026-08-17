@@ -782,12 +782,13 @@ jobs:
           for f in Makefile Kconfig tcp_bbrv3.c; do
             curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/bbrv3/${f}" -o "${GITHUB_WORKSPACE}/bbrv3/${f}" || exit 1
           done
+          export PATH="$GITHUB_WORKSPACE/kernel_workspace/clang19/bin:$GITHUB_WORKSPACE/kernel_workspace/build-tools/bin:$PATH"
           cd kernel_workspace/common
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export LLVM=1 LLVM_IAS=1
           make -j$(nproc --all) LLVM=1 O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-            CC="$PWD/cc-wrapper" LD="$PWD/ld-wrapper" OBJCOPY=llvm-objcopy \
+            CC=clang LD=ld.lld OBJCOPY=llvm-objcopy \
             M="$GITHUB_WORKSPACE/bbrv3" modules
           mkdir -p "$GITHUB_WORKSPACE/module-artifacts"
           cp -f "$GITHUB_WORKSPACE/bbrv3/tcp_bbrv3.ko" "$GITHUB_WORKSPACE/module-artifacts/tcp_bbrv3-6.12.23-gki.ko" 2>/dev/null || \
