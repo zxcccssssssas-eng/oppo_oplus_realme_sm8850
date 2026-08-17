@@ -777,6 +777,11 @@ jobs:
 
       - name: 编译 BBRv3 内核模块（同源同配置）
         run: |
+          # 本 workflow 不做仓库 checkout，先从当前 commit 拉取 bbrv3 源码
+          mkdir -p "$GITHUB_WORKSPACE/bbrv3"
+          for f in Makefile Kconfig tcp_bbrv3.c; do
+            curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/bbrv3/${f}" -o "${GITHUB_WORKSPACE}/bbrv3/${f}" || exit 1
+          done
           cd kernel_workspace/common
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
