@@ -17,6 +17,7 @@ on:
           - 'sm8845_6.12.38'
           - 'sm8845_6.12.23'
           - 'mt6993_6.12.23'
+          - 'gki_6.12.23'
           - 'gki_6.12.30'
 
 jobs:
@@ -53,9 +54,9 @@ jobs:
           elif [[ "$KERNEL_SOURCE" == "mt6993_6.12.23" ]]; then
             KERNEL_URL="https://github.com/cctv18/android_kernel_oppo_mt6993/archive/refs/heads/oppo/mt6993_b_16.0.0_find_x9.zip"
             KERNEL_DIR="android_kernel_oppo_mt6993-oppo-mt6993_b_16.0.0_find_x9"
-          elif [[ "$KERNEL_SOURCE" == "gki_6.12.30" ]]; then
-            KERNEL_URL="https://github.com/cctv18/android_gki_kernel_common/archive/refs/heads/android16-6.12-2025-06.zip"
-            KERNEL_DIR="android_gki_kernel_common-android16-6.12-2025-06"
+          elif [[ "$KERNEL_SOURCE" == "gki_6.12.23" || "$KERNEL_SOURCE" == "gki_6.12.30" ]]; then
+            KERNEL_URL="https://github.com/cctv18/android_gki_kernel_common/archive/a8f88ad96df3b3e640d5b0aa313739188d5b4acb.zip"
+            KERNEL_DIR="android_gki_kernel_common-a8f88ad96df3b3e640d5b0aa313739188d5b4acb"
           fi
 
           echo "Downloading from: $KERNEL_URL"
@@ -99,6 +100,8 @@ jobs:
 
           # 扩大 ICSK_CA_PRIV_SIZE 以容纳 BBRv3 的 struct bbr (152B > 104B)
           sed -i 's#icsk_ca_priv\[104 / sizeof(u64)\]#icsk_ca_priv[160 / sizeof(u64)]#' include/net/inet_connection_sock.h
+          # 与 fastbuild_6.12.23_gki.yml 的 KERNEL_NAME 保持一致，否则模块 vermagic 与运行内核不匹配
+          sed -i 's/CONFIG_LOCALVERSION="-4k"/CONFIG_LOCALVERSION="-android16-5-ga8f88ad96df3-ab13929693-4k"/' arch/arm64/configs/gki_defconfig
 
           make ARCH=arm64 gki_defconfig 2>&1 | tail -5
 
