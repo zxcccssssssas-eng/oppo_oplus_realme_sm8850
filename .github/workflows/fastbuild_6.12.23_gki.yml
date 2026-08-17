@@ -784,6 +784,8 @@ jobs:
           done
           export PATH="$GITHUB_WORKSPACE/kernel_workspace/clang19/bin:$GITHUB_WORKSPACE/kernel_workspace/build-tools/bin:$PATH"
           cd kernel_workspace/common
+          # fastbuild 只编 Image，产物是 vmlinux.symvers；外部模块需要 Module.symvers
+          cp -f out/vmlinux.symvers out/Module.symvers 2>/dev/null || cp -f out/Module.symvers out/Module.symvers 2>/dev/null || true
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export LLVM=1 LLVM_IAS=1
