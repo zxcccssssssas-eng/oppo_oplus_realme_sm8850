@@ -138,14 +138,6 @@ done
 sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-'${CUSTOM_SUFFIX}'"/' ./common/arch/arm64/configs/gki_defconfig
 sed -i 's/${scm_version}//' ./common/scripts/setlocalversion
 echo "CONFIG_LOCALVERSION_AUTO=n" >> ./common/arch/arm64/configs/gki_defconfig
-# 从 uname -a / uname -v 去掉内核编译日期（UTS_VERSION 默认会拼上 make 调用 date 的结果）
-if [[ -f ./common/init/Makefile ]] && grep -q 'build-timestamp' ./common/init/Makefile; then
-  sed -i 's/[[:space:]]*"$(build-timestamp)"//' ./common/init/Makefile
-  echo ">>> 已从 init/Makefile 的 UTS_VERSION 中移除编译时间戳"
-else
-  echo ">>> 警告: 未在 init/Makefile 中找到 build-timestamp，uname 可能仍包含编译日期"
-fi
-
 
 # ===== 拉取 KSU 并设置版本号 =====
 if [[ "$KSU_BRANCH" == "y" || "$KSU_BRANCH" == "Y" ]]; then
@@ -504,12 +496,13 @@ KCFLAGS+=" -fmacro-prefix-map=$ROOT_REAL_PATH=."
 KCFLAGS+=" -ffile-prefix-map=$ROOT_REAL_PATH=."
 export KCFLAGS
 source "./_setup_env.sh" 2>/dev/null || true
-# 固定构建元数据：uname 已去掉日期；initramfs/kheaders/ccache 仍需要可解析的稳定时间戳
-export KBUILD_BUILD_TIMESTAMP="Sun May 25 13:00:00 UTC 2025"
+# 把真实编译时间写入 uname -a / uname -v（UTS_VERSION）；不要走 faketime
+export KBUILD_BUILD_TIMESTAMP="$(env -u LD_PRELOAD -u FAKETIME LC_ALL=C date)"
 export KBUILD_BUILD_USER="user"
 export KBUILD_BUILD_HOST="localhost"
 export KBUILD_BUILD_VERSION="1"
-export SOURCE_DATE_EPOCH=1748178000
+export SOURCE_DATE_EPOCH="$(env -u LD_PRELOAD -u FAKETIME date +%s)"
+echo ">>> 内核编译时间 (uname -v): $KBUILD_BUILD_TIMESTAMP"
 
 echo "KCFLAGS=$KCFLAGS"
 
@@ -526,6 +519,16 @@ make -j$(nproc --all) \
     O=out \
     gki_defconfig Image 2>&1 | tee $WORKDIR/build.log
 echo ">>> 内核编译成功！"
+echo ">>> 内核 UTS_VERSION (uname -v，应包含真实编译时间):"
+if [[ -f out/include/generated/utsversion.h ]]; then
+  cat out/include/generated/utsversion.h
+  if ! grep -qE '[0-9]{4}' out/include/generated/utsversion.h; then
+    echo ">>> 错误: UTS_VERSION 未包含年份，uname -a 将没有构建时间"
+    exit 1
+  fi
+else
+  echo ">>> 警告: 未生成 out/include/generated/utsversion.h"
+fi
 
 # ===== 选择使用 patch_linux (KPM补丁)=====
 WORKDIR="$SCRIPT_DIR"

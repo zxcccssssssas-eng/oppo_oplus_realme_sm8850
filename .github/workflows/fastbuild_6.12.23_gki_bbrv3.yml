@@ -643,15 +643,6 @@ jobs:
             sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-${{ env.KERNEL_NAME }}"/' ./common/arch/arm64/configs/gki_defconfig
           fi
           sed -i 's/${scm_version}//' ./common/scripts/setlocalversion
-          # 从 uname -a / uname -v 去掉内核编译日期。
-          # UTS_VERSION 由 init/Makefile 的 filechk_uts_version 生成，默认会拼上 $(build-timestamp)
-          #（即 make 调用的 date）。libfaketime 只包装了 clang/ld，不会劫持这次 date。
-          if [[ -f ./common/init/Makefile ]] && grep -q 'build-timestamp' ./common/init/Makefile; then
-            sed -i 's/[[:space:]]*"$(build-timestamp)"//' ./common/init/Makefile
-            echo "已从 init/Makefile 的 UTS_VERSION 中移除编译时间戳"
-          else
-            echo "警告: 未在 init/Makefile 中找到 build-timestamp，uname 可能仍包含编译日期"
-          fi
           echo "CONFIG_LOCALVERSION_AUTO=n" >> ./common/arch/arm64/configs/gki_defconfig
            
       - name: 添加 BBRv3 模块源码（in-tree）
@@ -767,13 +758,15 @@ jobs:
           export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump OBJSIZE=llvm-size STRIP=llvm-strip
           # 5. 编译前运行官方环境配置脚本
           source "./_setup_env.sh" 2>/dev/null || true
-          # 固定构建元数据：即使 UTS_VERSION 已去掉日期，initramfs/kheaders/ccache 仍需要稳定时间戳。
-          # libfaketime 无法覆盖 make 的 $(shell date)。空的 KBUILD_BUILD_TIMESTAMP 会回退到当前时间。
-          export KBUILD_BUILD_TIMESTAMP="Sun May 25 13:00:00 UTC 2025"
+          # 把真实编译时间写入 uname -a / uname -v（UTS_VERSION）。
+          # 必须在无 LD_PRELOAD/FAKETIME 时取 date，否则会变成 faketime 的假日期。
+          export KBUILD_BUILD_TIMESTAMP="$(env -u LD_PRELOAD -u FAKETIME LC_ALL=C date)"
           export KBUILD_BUILD_USER="user"
           export KBUILD_BUILD_HOST="localhost"
           export KBUILD_BUILD_VERSION="1"
-          export SOURCE_DATE_EPOCH=1748178000
+          export SOURCE_DATE_EPOCH="$(env -u LD_PRELOAD -u FAKETIME date +%s)"
+          echo "内核编译时间 (uname -v): $KBUILD_BUILD_TIMESTAMP"
+          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
           
           #在构建内核的同时清除不必要的.NET, Android NDK, Haskell, CodeQL运行库，清理空间且不阻塞后续步骤运行
           sudo rm -rf /usr/share/dotnet &
@@ -790,6 +783,16 @@ jobs:
           cp -f out/net/ipv4/tcp_bbrv3.ko "$GITHUB_WORKSPACE/module-artifacts/tcp_bbrv3-6.12.23-gki.ko" 2>/dev/null || true
           ls -la "$GITHUB_WORKSPACE/module-artifacts/"
           
+          echo "===== 内核 UTS_VERSION (uname -v，应包含真实编译时间) ====="
+          if [[ -f out/include/generated/utsversion.h ]]; then
+            cat out/include/generated/utsversion.h
+            if ! grep -qE '[0-9]{4}' out/include/generated/utsversion.h; then
+              echo "错误: UTS_VERSION 未包含年份，uname -a 将没有构建时间"
+              exit 1
+            fi
+          else
+            echo "警告: 未生成 out/include/generated/utsversion.h"
+          fi
           # 编译后时间劫持二次校验
           echo "--- 编译后环境时间: $(LD_PRELOAD=$PRELOAD_LIBS date) ---"
           echo "--- 编译后环境文件时间戳: ---"

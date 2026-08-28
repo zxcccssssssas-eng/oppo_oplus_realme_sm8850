@@ -97,16 +97,13 @@ jobs:
           export CC=clang
           export HOSTCC=clang
           export LLVM=1 LLVM_IAS=1
-          # 固定构建元数据，并从 UTS_VERSION 去掉编译日期（uname -a 不显示实际编译时间）
-          export KBUILD_BUILD_TIMESTAMP="Sun May 25 13:00:00 UTC 2025"
+          # 把真实编译时间写入 uname -a / uname -v（UTS_VERSION）
+          export KBUILD_BUILD_TIMESTAMP="$(env -u LD_PRELOAD -u FAKETIME LC_ALL=C date)"
           export KBUILD_BUILD_USER="user"
           export KBUILD_BUILD_HOST="localhost"
           export KBUILD_BUILD_VERSION="1"
-          export SOURCE_DATE_EPOCH=1748178000
-          if [[ -f init/Makefile ]] && grep -q 'build-timestamp' init/Makefile; then
-            sed -i 's/[[:space:]]*"$(build-timestamp)"//' init/Makefile
-            echo "已从 init/Makefile 的 UTS_VERSION 中移除编译时间戳"
-          fi
+          export SOURCE_DATE_EPOCH="$(env -u LD_PRELOAD -u FAKETIME date +%s)"
+          echo "内核编译时间 (uname -v): $KBUILD_BUILD_TIMESTAMP"
 
           # 扩大 ICSK_CA_PRIV_SIZE 以容纳 BBRv3 的 struct bbr (152B > 104B)
           sed -i 's#icsk_ca_priv\[104 / sizeof(u64)\]#icsk_ca_priv[160 / sizeof(u64)]#' include/net/inet_connection_sock.h
