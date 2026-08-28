@@ -634,15 +634,24 @@ jobs:
             for f in ./common/scripts/setlocalversion; do
               sed -i "\$s|echo \"\\\$res\"|echo \"-${{ github.event.inputs.kernel_suffix }}\"|" "$f"
             done
-            sudo sed -i 's/-4k/-${{ github.event.inputs.KERNEL_SUFFIX }}/g' ./common/arch/arm64/configs/gki_defconfig
+            sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-${{ github.event.inputs.kernel_suffix }}"/' ./common/arch/arm64/configs/gki_defconfig
           else
             echo "当前内核版本后缀：${{ env.KERNEL_NAME }}"
             for f in ./common/scripts/setlocalversion; do
               sed -i "\$s|echo \"\\\$res\"|echo \"-${{ env.KERNEL_NAME }}\"|" "$f"
             done
-            sudo sed -i 's/-4k/-${{ env.KERNEL_NAME }}/g' ./common/arch/arm64/configs/gki_defconfig
+            sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-${{ env.KERNEL_NAME }}"/' ./common/arch/arm64/configs/gki_defconfig
           fi
           sed -i 's/${scm_version}//' ./common/scripts/setlocalversion
+          # 从 uname -a / uname -v 去掉内核编译日期。
+          # UTS_VERSION 由 init/Makefile 的 filechk_uts_version 生成，默认会拼上 $(build-timestamp)
+          #（即 make 调用的 date）。libfaketime 只包装了 clang/ld，不会劫持这次 date。
+          if [[ -f ./common/init/Makefile ]] && grep -q 'build-timestamp' ./common/init/Makefile; then
+            sed -i 's/[[:space:]]*"$(build-timestamp)"//' ./common/init/Makefile
+            echo "已从 init/Makefile 的 UTS_VERSION 中移除编译时间戳"
+          else
+            echo "警告: 未在 init/Makefile 中找到 build-timestamp，uname 可能仍包含编译日期"
+          fi
           echo "CONFIG_LOCALVERSION_AUTO=n" >> ./common/arch/arm64/configs/gki_defconfig
            
       - name: 构建内核
@@ -748,6 +757,13 @@ jobs:
           export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump OBJSIZE=llvm-size STRIP=llvm-strip
           # 5. 编译前运行官方环境配置脚本
           source "./_setup_env.sh" 2>/dev/null || true
+          # 固定构建元数据：即使 UTS_VERSION 已去掉日期，initramfs/kheaders/ccache 仍需要稳定时间戳。
+          # libfaketime 无法覆盖 make 的 $(shell date)。空的 KBUILD_BUILD_TIMESTAMP 会回退到当前时间。
+          export KBUILD_BUILD_TIMESTAMP="Sun May 25 13:00:00 UTC 2025"
+          export KBUILD_BUILD_USER="user"
+          export KBUILD_BUILD_HOST="localhost"
+          export KBUILD_BUILD_VERSION="1"
+          export SOURCE_DATE_EPOCH=1748178000
           
           #在构建内核的同时清除不必要的.NET, Android NDK, Haskell, CodeQL运行库，清理空间且不阻塞后续步骤运行
           sudo rm -rf /usr/share/dotnet &

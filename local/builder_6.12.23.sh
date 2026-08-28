@@ -87,7 +87,7 @@ SU() {
     fi
 }
 
-SU apt-mark hold firefox && apt-mark hold libc-bin && apt-mark hold man-db
+SU apt-mark hold firefox && SU apt-mark hold libc-bin && SU apt-mark hold man-db
 SU rm -rf /var/lib/man-db/auto-update
 SU apt-get update
 SU apt-get install --no-install-recommends -y curl bison flex clang binutils dwarves git lld pahole zip perl make gcc python3 python-is-python3 bc libssl-dev libelf-dev libdw-dev cpio xz-utils tar unzip aria2
@@ -135,9 +135,17 @@ echo ">>> 替换内核版本后缀..."
 for f in ./common/scripts/setlocalversion; do
   sed -i "\$s|echo \"\\\$res\"|echo \"-${CUSTOM_SUFFIX}\"|" "$f"
 done
-sudo sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-'${CUSTOM_SUFFIX}'"/' ./common/arch/arm64/configs/gki_defconfig
+sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-'${CUSTOM_SUFFIX}'"/' ./common/arch/arm64/configs/gki_defconfig
 sed -i 's/${scm_version}//' ./common/scripts/setlocalversion
 echo "CONFIG_LOCALVERSION_AUTO=n" >> ./common/arch/arm64/configs/gki_defconfig
+# 从 uname -a / uname -v 去掉内核编译日期（UTS_VERSION 默认会拼上 make 调用 date 的结果）
+if [[ -f ./common/init/Makefile ]] && grep -q 'build-timestamp' ./common/init/Makefile; then
+  sed -i 's/[[:space:]]*"$(build-timestamp)"//' ./common/init/Makefile
+  echo ">>> 已从 init/Makefile 的 UTS_VERSION 中移除编译时间戳"
+else
+  echo ">>> 警告: 未在 init/Makefile 中找到 build-timestamp，uname 可能仍包含编译日期"
+fi
+
 
 # ===== 拉取 KSU 并设置版本号 =====
 if [[ "$KSU_BRANCH" == "y" || "$KSU_BRANCH" == "Y" ]]; then
@@ -496,6 +504,13 @@ KCFLAGS+=" -fmacro-prefix-map=$ROOT_REAL_PATH=."
 KCFLAGS+=" -ffile-prefix-map=$ROOT_REAL_PATH=."
 export KCFLAGS
 source "./_setup_env.sh" 2>/dev/null || true
+# 固定构建元数据：uname 已去掉日期；initramfs/kheaders/ccache 仍需要可解析的稳定时间戳
+export KBUILD_BUILD_TIMESTAMP="Sun May 25 13:00:00 UTC 2025"
+export KBUILD_BUILD_USER="user"
+export KBUILD_BUILD_HOST="localhost"
+export KBUILD_BUILD_VERSION="1"
+export SOURCE_DATE_EPOCH=1748178000
+
 echo "KCFLAGS=$KCFLAGS"
 
 make -j$(nproc --all) \
