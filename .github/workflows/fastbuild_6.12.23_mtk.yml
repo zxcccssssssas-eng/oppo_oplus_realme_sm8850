@@ -643,6 +643,9 @@ jobs:
           fi
           sed -i 's/${scm_version}//' ./common/scripts/setlocalversion
           echo "CONFIG_LOCALVERSION_AUTO=n" >> ./common/arch/arm64/configs/gki_defconfig
+          # 关闭模块签名：允许加载未签名模块
+          sed -i '/^CONFIG_MODULE_SIG=y$/d' ./common/arch/arm64/configs/gki_defconfig
+          echo '# CONFIG_MODULE_SIG is not set' >> ./common/arch/arm64/configs/gki_defconfig
            
       - name: 构建内核
         run: |
