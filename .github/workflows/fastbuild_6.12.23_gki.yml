@@ -645,8 +645,18 @@ jobs:
           sed -i 's/${scm_version}//' ./common/scripts/setlocalversion
           echo "CONFIG_LOCALVERSION_AUTO=n" >> ./common/arch/arm64/configs/gki_defconfig
           # 关闭模块签名：允许加载未签名模块
-          sed -i '/^CONFIG_MODULE_SIG=y$/d' ./common/arch/arm64/configs/gki_defconfig
-          echo '# CONFIG_MODULE_SIG is not set' >> ./common/arch/arm64/configs/gki_defconfig
+          sed -i \
+            -e '/^CONFIG_MODULE_SIG=y$/d' \
+            -e '/^CONFIG_MODULE_SIG=n$/d' \
+            -e '/^# CONFIG_MODULE_SIG is not set$/d' \
+            -e '/^CONFIG_MODULE_SIG_FORCE=/d' \
+            -e '/^# CONFIG_MODULE_SIG_FORCE is not set$/d' \
+            -e '/^CONFIG_MODULE_SIG_ALL=/d' \
+            -e '/^# CONFIG_MODULE_SIG_ALL is not set$/d' \
+            ./common/arch/arm64/configs/gki_defconfig
+          echo 'CONFIG_MODULE_SIG=n' >> ./common/arch/arm64/configs/gki_defconfig
+          echo 'CONFIG_MODULE_SIG_FORCE=n' >> ./common/arch/arm64/configs/gki_defconfig
+          echo 'CONFIG_MODULE_SIG_ALL=n' >> ./common/arch/arm64/configs/gki_defconfig
            
       - name: 构建内核
         run: |
