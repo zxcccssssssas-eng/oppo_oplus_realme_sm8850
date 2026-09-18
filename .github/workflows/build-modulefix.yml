@@ -54,8 +54,11 @@ jobs:
         run: |
           set -euo pipefail
           cd kernel_workspace/common
-          git apply --whitespace=nowarn "$GITHUB_WORKSPACE/patches/kernel-modulefix-final.patch"
-          echo "Patch applied. HEAD kernel version:"
+          patch -p1 -s --forward --no-backup-if-mismatch < "$GITHUB_WORKSPACE/patches/kernel-modulefix-final.patch"
+          echo "Patch applied. Verifying anchors:"
+          grep -q '^EXTRAVERSION = -zen1' Makefile
+          grep -q '^CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y' arch/arm64/configs/gki_defconfig
+          grep -q 'module_is_builtin_alias' kernel/module/main.c
           head -n 8 Makefile
 
       - name: Build patched pahole v1.30
@@ -100,7 +103,14 @@ jobs:
           echo "================ relevant config ================"
           grep -E '^CONFIG_(PAHOLE_VERSION|TLS|ZRAM|ZSMALLOC|ANDROID_BINDER_IPC_RUST|HZ|CC_OPTIMIZE|STACKPROTECTOR|LOCALVERSION)=' out/.config | sort || true
           echo "==================================================="
+          grep -q '^CONFIG_ZEN_INTERACTIVE=y' out/.config
+          grep -q '^CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y' out/.config
+          grep -q '^CONFIG_TLS=y' out/.config
+          grep -q '^CONFIG_ZRAM=y' out/.config
+          grep -q '^CONFIG_ANDROID_BINDER_IPC_RUST=y' out/.config
           make -j"$(nproc)" O=out PAHOLE="$PAHOLE" Image
+          grep -q 'zen1-android16-5-ga8f88ad96df3-ab13929693-4k' out/include/config/kernel.release
+          echo "Kernel release: $(cat out/include/config/kernel.release)"
 
       - name: Validate BTF DATASEC entries
         run: |
