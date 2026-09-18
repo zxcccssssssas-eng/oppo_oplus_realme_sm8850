@@ -33,7 +33,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             aria2 bc bison cmake flex git libdw-dev libelf-dev libssl-dev \
             python-is-python3 python3 wget zip zlib1g-dev
-          sudo apt-get install -y --no-install-recommends bpftool || true
 
       - name: Download source and toolchains
         run: |
@@ -106,11 +105,9 @@ jobs:
       - name: Validate BTF DATASEC entries
         run: |
           set -euo pipefail
-          if command -v bpftool >/dev/null 2>&1; then
-            python3 "$GITHUB_WORKSPACE/scripts/check_btf.py" "$GITHUB_WORKSPACE/kernel_workspace/common/out/vmlinux"
-          else
-            echo "bpftool not available; skipping DATASEC validation"
-          fi
+          export PATH="$GITHUB_WORKSPACE/kernel_workspace/clang19/bin:$PATH"
+          export OBJCOPY=llvm-objcopy
+          python3 "$GITHUB_WORKSPACE/scripts/check_btf.py" "$GITHUB_WORKSPACE/kernel_workspace/common/out/vmlinux"
 
       - name: Patch KPN
         run: |
