@@ -1,0 +1,163 @@
+name: Build 6.12.23 modulefix kernel
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      KERNEL_ZIP_URL: https://github.com/cctv18/android_kernel_common_oneplus_sm8850/archive/refs/heads/oneplus/sm8850_v_16.0.0_oneplus_15.zip
+      KERNEL_DIR: android_kernel_common_oneplus_sm8850-oneplus-sm8850_v_16.0.0_oneplus_15
+      CLANG_URL: https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/clang-r536225.zip
+      RUST_URL: https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/rust.zip
+      BUILD_TOOLS_URL: https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/build-tools.zip
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            aria2 bc bison cmake flex git libdw-dev libelf-dev libssl-dev \
+            python-is-python3 python3 wget zip zlib1g-dev
+          sudo apt-get install -y --no-install-recommends bpftool || true
+
+      - name: Download source and toolchains
+        run: |
+          set -euo pipefail
+          mkdir -p kernel_workspace
+          cd kernel_workspace
+          wget -q "$CLANG_URL" -O clang.zip
+          unzip -q clang.zip -d clang19
+          wget -q "$RUST_URL" -O rust.zip
+          unzip -q rust.zip -d rust
+          wget -q "$BUILD_TOOLS_URL" -O build-tools.zip
+          unzip -q build-tools.zip -d build-tools
+          wget -q "$KERNEL_ZIP_URL" -O common.zip
+          unzip -q common.zip
+          mv "$KERNEL_DIR" common
+          rm -f clang.zip rust.zip build-tools.zip common.zip
+
+      - name: Apply custom kernel patch
+        run: |
+          set -euo pipefail
+          cd kernel_workspace/common
+          git apply --whitespace=nowarn "$GITHUB_WORKSPACE/patches/kernel-modulefix-final.patch"
+          echo "Patch applied. HEAD kernel version:"
+          head -n 8 Makefile
+
+      - name: Build patched pahole v1.30
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          rm -rf pahole-src
+          git clone --depth 1 --branch v1.30 --recurse-submodules --shallow-submodules \
+            https://git.kernel.org/pub/scm/devel/pahole/pahole.git pahole-src \
+            || git clone --depth 1 --branch v1.30 --recurse-submodules --shallow-submodules \
+                 https://github.com/acmel/dwarves.git pahole-src
+          cd pahole-src
+          git apply "$GITHUB_WORKSPACE/patches/pahole-dwarf-location.patch"
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PWD/install"
+          cmake --build build -j"$(nproc)"
+          echo "PAHOLE=$PWD/build/pahole" >> "$GITHUB_ENV"
+          "$PWD/build/pahole" --version
+
+      - name: Build kernel image
+        run: |
+          set -euo pipefail
+          cd kernel_workspace/common
+          export PATH="$GITHUB_WORKSPACE/kernel_workspace/clang19/bin:$GITHUB_WORKSPACE/kernel_workspace/build-tools/bin:$GITHUB_WORKSPACE/kernel_workspace/rust/bin:$PATH"
+          export ARCH=arm64 SUBARCH=arm64 LLVM=1 LLVM_IAS=1
+          export CC="$GITHUB_WORKSPACE/kernel_workspace/clang19/bin/clang" HOSTCC=gcc HOSTLD=ld
+          export RUSTC=rustc BINDGEN=bindgen LIBCLANG_PATH="$GITHUB_WORKSPACE/kernel_workspace/clang19/lib"
+          export LD=ld.lld AR=llvm-ar NM=llvm-nm AS=clang READELF=llvm-readelf
+          export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export HOSTCFLAGS="-Wno-error -Wno-incompatible-pointer-types-discards-qualifiers"
+          export KBUILD_GENDWARFKSYMS_STABLE=1
+          COMMON_REAL_PATH="$(pwd -P)"
+          ROOT_REAL_PATH="$(dirname "$COMMON_REAL_PATH")"
+          export KCFLAGS="-no-canonical-prefixes -pipe -Wno-error -D__ANDROID_COMMON_KERNEL__ -fdebug-prefix-map=$ROOT_REAL_PATH=. -fmacro-prefix-map=$ROOT_REAL_PATH=. -ffile-prefix-map=$ROOT_REAL_PATH=."
+          export KBUILD_BUILD_TIMESTAMP="$(LC_ALL=C date)"
+          export KBUILD_BUILD_USER=user KBUILD_BUILD_HOST=localhost KBUILD_BUILD_VERSION=1
+          export SOURCE_DATE_EPOCH="$(date +%s)"
+
+          make -j"$(nproc)" O=out PAHOLE="$PAHOLE" gki_defconfig
+          ./scripts/config --file out/.config -e TLS -e ZRAM -e ANDROID_BINDER_IPC_RUST
+          make -j"$(nproc)" O=out PAHOLE="$PAHOLE" olddefconfig
+          echo "================ relevant config ================"
+          grep -E '^CONFIG_(PAHOLE_VERSION|TLS|ZRAM|ZSMALLOC|ANDROID_BINDER_IPC_RUST|HZ|CC_OPTIMIZE|STACKPROTECTOR|LOCALVERSION)=' out/.config | sort || true
+          echo "==================================================="
+          make -j"$(nproc)" O=out PAHOLE="$PAHOLE" Image
+
+      - name: Validate BTF DATASEC entries
+        run: |
+          set -euo pipefail
+          if command -v bpftool >/dev/null 2>&1; then
+            python3 "$GITHUB_WORKSPACE/scripts/check_btf.py" "$GITHUB_WORKSPACE/kernel_workspace/common/out/vmlinux"
+          else
+            echo "bpftool not available; skipping DATASEC validation"
+          fi
+
+      - name: Patch KPN
+        run: |
+          set -euo pipefail
+          cd kernel_workspace/common/out/arch/arm64/boot
+          wget -q https://github.com/KernelSU-Next/KPatch-Next/releases/latest/download/kptools-linux -O kptools-linux
+          wget -q https://github.com/KernelSU-Next/KPatch-Next/releases/latest/download/kpimg-linux -O kpimg-linux
+          chmod +x kptools-linux
+          ./kptools-linux -p -i Image -k kpimg-linux -o oImage
+          rm -f Image
+          mv oImage Image
+          ls -lh Image
+
+      - name: Package AnyKernel3
+        id: package
+        run: |
+          set -euo pipefail
+          cd kernel_workspace
+          rm -rf AnyKernel3
+          git clone --depth=1 https://github.com/cctv18/AnyKernel3
+          rm -rf AnyKernel3/.git
+          cp common/out/arch/arm64/boot/Image AnyKernel3/Image
+          cp "$GITHUB_WORKSPACE/zram.zip" AnyKernel3/zram.zip
+          wget -q https://github.com/cctv18/KPatch-Next/releases/latest/download/kpn.zip -O AnyKernel3/kpn.zip
+          cd AnyKernel3
+          ZIP_NAME="Anykernel3-oppo+oplus+realme-zen-kmi250-modulefix-$(TZ=Asia/Shanghai date +%Y%m%d%H%M).zip"
+          zip -r9 "$GITHUB_WORKSPACE/$ZIP_NAME" ./*
+          sha256sum "$GITHUB_WORKSPACE/$ZIP_NAME" | tee "$GITHUB_WORKSPACE/$ZIP_NAME.sha256"
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload kernel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-modulefix
+          path: |
+            ${{ github.workspace }}/Anykernel3-*.zip
+            ${{ github.workspace }}/Anykernel3-*.zip.sha256
+          if-no-files-found: error
+
+      - name: Create pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="modulefix-$(TZ=Asia/Shanghai date +%Y%m%d%H%M%S)"
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --notes "6.12.23 modulefix kernel: Zen/Liquorix O3, 250 Hz, KMI-preserving, built-in tls/rust_binder/zram/zsmalloc, KPN." \
+            "$GITHUB_WORKSPACE"/Anykernel3-*.zip "$GITHUB_WORKSPACE"/Anykernel3-*.zip.sha256
